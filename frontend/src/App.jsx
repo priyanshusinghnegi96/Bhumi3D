@@ -1,27 +1,21 @@
 import "./App.css";
+import CesiumViewer from "./cesium/CesiumViewer";
 
 function App() {
   return (
     <div className="app">
-
-      {/* Top Navigation Bar */}
       <header className="navbar">
         <div>
           <h1>Bhumi3D</h1>
           <p>3D ULPIN & Vertical Property Mapping System</p>
         </div>
 
-        <div className="status">
-          SIH26011
-        </div>
+        <div className="status">SIH26011</div>
       </header>
 
-      {/* Main Application Area */}
       <main className="main-layout">
-
-        {/* Left Sidebar */}
+        {/* LEFT SIDEBAR */}
         <aside className="sidebar">
-
           <h2>Layers</h2>
 
           <label>
@@ -62,37 +56,15 @@ function App() {
           <button className="search-button">
             Search
           </button>
-
         </aside>
 
-        {/* This will later contain Cesium */}
+        {/* 3D VIEWER */}
         <section className="map-area">
-
-          <div className="map-placeholder">
-
-            <h2>3D Cadastral Viewer</h2>
-
-            <p>
-              CesiumJS map will appear here.
-            </p>
-
-            <div className="demo-building">
-
-              <div>Floor 4</div>
-              <div>Floor 3</div>
-              <div>Floor 2</div>
-              <div>Floor 1</div>
-              <div>Ground Floor</div>
-
-            </div>
-
-          </div>
-
+          <CesiumViewer />
         </section>
 
-        {/* Property Information Panel */}
+        {/* RIGHT PANEL */}
         <aside className="property-panel">
-
           <h2>Property Information</h2>
 
           <div className="property-item">
@@ -133,11 +105,8 @@ function App() {
               ✓ Valid
             </strong>
           </div>
-
         </aside>
-
       </main>
-
     </div>
   );
 }

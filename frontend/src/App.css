@@ -4,7 +4,7 @@
 
 .app {
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
   background: #f4f6f8;
 }
 
@@ -14,6 +14,7 @@
 
 .navbar {
   height: 72px;
+
   background: #123524;
   color: white;
 
@@ -21,16 +22,16 @@
   align-items: center;
   justify-content: space-between;
 
-  padding: 0 24px;
+  padding: 0 22px;
 }
 
 .navbar h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 25px;
 }
 
 .navbar p {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   font-size: 12px;
   opacity: 0.8;
 }
@@ -38,8 +39,11 @@
 .status {
   background: #d4af37;
   color: #111;
-  padding: 7px 14px;
+
+  padding: 8px 15px;
+
   border-radius: 6px;
+
   font-weight: bold;
 }
 
@@ -51,9 +55,9 @@
   display: grid;
 
   grid-template-columns:
-    230px
+    205px
     1fr
-    300px;
+    270px;
 
   height: calc(100vh - 72px);
 }
@@ -67,7 +71,9 @@
 
   border-right: 1px solid #ddd;
 
-  padding: 20px;
+  padding: 18px;
+
+  overflow-y: auto;
 }
 
 .sidebar h2 {
@@ -77,7 +83,9 @@
 
 .sidebar label {
   display: block;
-  margin: 15px 0;
+
+  margin: 16px 0;
+
   font-size: 14px;
 }
 
@@ -87,8 +95,10 @@
 
 .sidebar hr {
   border: none;
+
   border-top: 1px solid #ddd;
-  margin: 24px 0;
+
+  margin: 25px 0;
 }
 
 .search-input {
@@ -121,56 +131,28 @@
 }
 
 /* =========================
-   MAP AREA
+   CESIUM VIEWER
 ========================= */
 
 .map-area {
-  background: #dde4e0;
+  position: relative;
 
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  width: 100%;
+  height: 100%;
 
   overflow: hidden;
+
+  background: #000;
 }
 
-.map-placeholder {
-  text-align: center;
-}
+.cesium-container {
+  position: absolute;
 
-.map-placeholder h2 {
-  margin-bottom: 5px;
-}
+  width: 100%;
+  height: 100%;
 
-.map-placeholder p {
-  color: #666;
-}
-
-/* Temporary Fake Building */
-
-.demo-building {
-  width: 260px;
-  margin: 30px auto;
-
-  border: 2px solid #123524;
-
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
-}
-
-.demo-building div {
-  height: 48px;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  background: white;
-
-  border-bottom: 1px solid #aaa;
-}
-
-.demo-building div:last-child {
-  border-bottom: none;
+  top: 0;
+  left: 0;
 }
 
 /* =========================
@@ -189,6 +171,7 @@
 
 .property-panel h2 {
   font-size: 18px;
+
   margin-top: 0;
 
   padding-bottom: 12px;
@@ -204,6 +187,7 @@
   display: block;
 
   font-size: 12px;
+
   color: #777;
 
   margin-bottom: 4px;
