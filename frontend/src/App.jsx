@@ -15,6 +15,55 @@ function App() {
     validation: "Not checked",
   });
 
+  // =========================
+  // LAYERS
+  // =========================
+
+  const [layers, setLayers] = useState({
+    parcels: true,
+    buildings: true,
+    apartments: true,
+    parking: true,
+    utilities: true,
+  });
+
+  function toggleLayer(layerName) {
+    setLayers((previous) => ({
+      ...previous,
+      [layerName]: !previous[layerName],
+    }));
+  }
+
+  // =========================
+  // SEARCH
+  // =========================
+
+  const [searchText, setSearchText] = useState("");
+  const [searchTrigger, setSearchTrigger] = useState(0);
+  const [searchMessage, setSearchMessage] = useState("");
+
+  function runSearch() {
+    if (!searchText.trim()) {
+      setSearchMessage("Enter a property ID or unit.");
+      return;
+    }
+
+    setSearchMessage("");
+    setSearchTrigger((previous) => previous + 1);
+  }
+
+  function handleSearchResult(result) {
+    if (result.found) {
+      setSearchMessage(`Found: ${result.name}`);
+    } else {
+      setSearchMessage("No matching property found.");
+    }
+  }
+
+  // =========================
+  // VALIDATION
+  // =========================
+
   const [validationTrigger, setValidationTrigger] =
     useState(0);
 
@@ -25,9 +74,7 @@ function App() {
     useState(null);
 
   function runValidation() {
-    setValidationTrigger(
-      (previous) => previous + 1
-    );
+    setValidationTrigger((previous) => previous + 1);
   }
 
   function resetValidation() {
@@ -36,8 +83,7 @@ function App() {
     setSelectedProperty({
       type: "Apartment",
       parentUlpIn: "ABC12345678901",
-      propertyId:
-        "ABC12345678901-B01-L04-U403",
+      propertyId: "ABC12345678901-B01-L04-U403",
       building: "B01",
       floor: "04",
       unit: "403",
@@ -45,14 +91,11 @@ function App() {
       validation: "Not checked",
     });
 
-    setResetTrigger(
-      (previous) => previous + 1
-    );
+    setResetTrigger((previous) => previous + 1);
   }
 
   return (
     <div className="app">
-
       {/* NAVBAR */}
 
       <header className="navbar">
@@ -60,8 +103,7 @@ function App() {
           <h1>Bhumi3D</h1>
 
           <p>
-            3D ULPIN & Vertical Property Mapping
-            System
+            3D ULPIN & Vertical Property Mapping System
           </p>
         </div>
 
@@ -72,7 +114,9 @@ function App() {
 
       <main className="main-layout">
 
-        {/* LEFT SIDEBAR */}
+        {/* =========================
+            LEFT SIDEBAR
+        ========================= */}
 
         <aside className="sidebar">
 
@@ -81,7 +125,10 @@ function App() {
           <label>
             <input
               type="checkbox"
-              defaultChecked
+              checked={layers.parcels}
+              onChange={() =>
+                toggleLayer("parcels")
+              }
             />
             Land Parcels
           </label>
@@ -89,15 +136,21 @@ function App() {
           <label>
             <input
               type="checkbox"
-              defaultChecked
+              checked={layers.buildings}
+              onChange={() =>
+                toggleLayer("buildings")
+              }
             />
-            Buildings
+            Building Floors
           </label>
 
           <label>
             <input
               type="checkbox"
-              defaultChecked
+              checked={layers.apartments}
+              onChange={() =>
+                toggleLayer("apartments")
+              }
             />
             Property Units
           </label>
@@ -105,7 +158,10 @@ function App() {
           <label>
             <input
               type="checkbox"
-              defaultChecked
+              checked={layers.parking}
+              onChange={() =>
+                toggleLayer("parking")
+              }
             />
             Basement Parking
           </label>
@@ -113,38 +169,73 @@ function App() {
           <label>
             <input
               type="checkbox"
-              defaultChecked
+              checked={layers.utilities}
+              onChange={() =>
+                toggleLayer("utilities")
+              }
             />
             Underground Utilities
           </label>
 
-          <label>
-            <input type="checkbox" />
+          <label className="disabled-layer">
+            <input
+              type="checkbox"
+              disabled
+            />
             LiDAR
+            <span className="coming-soon">
+              Prototype next
+            </span>
           </label>
 
           <hr />
+
+          {/* =========================
+              SEARCH
+          ========================= */}
 
           <h2>Search Property</h2>
 
           <input
             className="search-input"
             type="text"
-            placeholder="ULPIN or 3D Property ID"
+            value={searchText}
+            placeholder="403, P03, W-001 or 3D ID"
+            onChange={(event) =>
+              setSearchText(event.target.value)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                runSearch();
+              }
+            }}
           />
 
-          <button className="search-button">
+          <button
+            className="search-button"
+            onClick={runSearch}
+          >
             Search
           </button>
 
+          {searchMessage && (
+            <p className="search-message">
+              {searchMessage}
+            </p>
+          )}
+
           <hr />
+
+          {/* =========================
+              VALIDATION
+          ========================= */}
 
           <h2>Topology Validation</h2>
 
           <p className="validation-help">
-            Detect overlapping ownership
-            volumes and underground
-            infrastructure conflicts.
+            Detect overlapping ownership volumes
+            and underground infrastructure
+            conflicts.
           </p>
 
           <button
@@ -163,21 +254,24 @@ function App() {
 
         </aside>
 
-        {/* CESIUM VIEWER */}
+        {/* =========================
+            3D VIEWER
+        ========================= */}
 
         <section className="map-area">
 
           <CesiumViewer
             onSelect={setSelectedProperty}
-            validationTrigger={
-              validationTrigger
-            }
-            resetTrigger={
-              resetTrigger
-            }
-            onValidationResult={
-              setValidationResult
-            }
+
+            layers={layers}
+
+            searchText={searchText}
+            searchTrigger={searchTrigger}
+            onSearchResult={handleSearchResult}
+
+            validationTrigger={validationTrigger}
+            resetTrigger={resetTrigger}
+            onValidationResult={setValidationResult}
           />
 
           <div className="viewer-label">
@@ -210,7 +304,9 @@ function App() {
 
         </section>
 
-        {/* RIGHT PANEL */}
+        {/* =========================
+            RIGHT PANEL
+        ========================= */}
 
         <aside className="property-panel">
 
@@ -218,15 +314,11 @@ function App() {
 
           <div className="property-item">
             <span>Type</span>
-
-            <strong>
-              {selectedProperty.type}
-            </strong>
+            <strong>{selectedProperty.type}</strong>
           </div>
 
           <div className="property-item">
             <span>Parent ULPIN</span>
-
             <strong>
               {selectedProperty.parentUlpIn}
             </strong>
@@ -234,7 +326,6 @@ function App() {
 
           <div className="property-item">
             <span>3D Property ID</span>
-
             <strong>
               {selectedProperty.propertyId}
             </strong>
@@ -242,7 +333,6 @@ function App() {
 
           <div className="property-item">
             <span>Building</span>
-
             <strong>
               {selectedProperty.building}
             </strong>
@@ -250,7 +340,6 @@ function App() {
 
           <div className="property-item">
             <span>Floor / Level</span>
-
             <strong>
               {selectedProperty.floor}
             </strong>
@@ -258,7 +347,6 @@ function App() {
 
           <div className="property-item">
             <span>Unit</span>
-
             <strong>
               {selectedProperty.unit}
             </strong>
@@ -266,11 +354,8 @@ function App() {
 
           <div className="property-item">
             <span>Vertical Range</span>
-
             <strong>
-              {
-                selectedProperty.verticalRange
-              }
+              {selectedProperty.verticalRange}
             </strong>
           </div>
 
@@ -286,16 +371,13 @@ function App() {
                   : "valid"
               }
             >
-              {
-                selectedProperty.validation
-              }
+              {selectedProperty.validation}
             </strong>
           </div>
 
           {/* VALIDATION RESULTS */}
 
           {validationResult && (
-
             <div
               className={
                 validationResult.valid
@@ -303,7 +385,6 @@ function App() {
                   : "validation-card error"
               }
             >
-
               <h3>
                 {validationResult.valid
                   ? "✓ Model Valid"
@@ -312,20 +393,17 @@ function App() {
 
               {validationResult.valid && (
                 <p>
-                  No volumetric conflicts
-                  were detected.
+                  No volumetric conflicts were detected.
                 </p>
               )}
 
               {!validationResult.valid &&
                 validationResult.conflicts.map(
                   (conflict, index) => (
-
                     <div
                       className="conflict-item"
                       key={index}
                     >
-
                       <div className="conflict-number">
                         Conflict {index + 1}
                       </div>
@@ -336,37 +414,27 @@ function App() {
                       </p>
 
                       <p>
-                        <strong>
-                          Object A:
-                        </strong>{" "}
+                        <strong>Object A:</strong>{" "}
                         {conflict.objectA}
                       </p>
 
                       <p>
-                        <strong>
-                          Object B:
-                        </strong>{" "}
+                        <strong>Object B:</strong>{" "}
                         {conflict.objectB}
                       </p>
 
                       <p>
-                        <strong>
-                          Overlap:
-                        </strong>{" "}
+                        <strong>Overlap:</strong>{" "}
                         {conflict.volume} m³
                       </p>
 
                       <p>
-                        <strong>
-                          Severity:
-                        </strong>{" "}
+                        <strong>Severity:</strong>{" "}
                         HIGH
                       </p>
-
                     </div>
                   )
                 )}
-
             </div>
           )}
 

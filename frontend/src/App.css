@@ -389,3 +389,30 @@
 
   color: #711616;
 }
+.search-message {
+  margin: 8px 0 0;
+
+  font-size: 11px;
+
+  color: #555;
+
+  line-height: 1.4;
+}
+
+.disabled-layer {
+  opacity: 0.55;
+}
+
+.coming-soon {
+  display: block;
+
+  margin-left: 22px;
+  margin-top: 2px;
+
+  font-size: 9px;
+
+  color: #777;
+
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
