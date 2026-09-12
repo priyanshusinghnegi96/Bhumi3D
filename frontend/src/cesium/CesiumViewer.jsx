@@ -37,9 +37,9 @@ function CesiumViewer({ onSelect }) {
       }
     );
 
-    // =========================
-    // BASIC ENVIRONMENT
-    // =========================
+    // -------------------------
+    // ENVIRONMENT
+    // -------------------------
 
     viewer.scene.backgroundColor =
       Color.fromCssColorString("#87CEEB");
@@ -53,32 +53,30 @@ function CesiumViewer({ onSelect }) {
     const parentULPIN =
       "ABC12345678901";
 
-    // =========================
+    // -------------------------
     // LAND PARCEL
-    // =========================
+    // -------------------------
 
     viewer.entities.add({
       id: "parcel-001",
 
       name: "Land Parcel",
 
-      position:
-        Cartesian3.fromDegrees(
-          longitude,
-          latitude,
-          0.5
-        ),
+      position: Cartesian3.fromDegrees(
+        longitude,
+        latitude,
+        0.5
+      ),
 
       box: {
-        dimensions:
-          new Cartesian3(
-            80,
-            65,
-            1
-          ),
+        dimensions: new Cartesian3(
+          80,
+          65,
+          1
+        ),
 
         material:
-          Color.LIMEGREEN.withAlpha(0.6),
+          Color.LIMEGREEN.withAlpha(0.55),
 
         outline: true,
 
@@ -112,9 +110,9 @@ function CesiumViewer({ onSelect }) {
       },
     });
 
-    // =========================
-    // BUILDING FLOORS
-    // =========================
+    // -------------------------
+    // APARTMENT SETTINGS
+    // -------------------------
 
     const floorHeight = 7;
 
@@ -126,32 +124,69 @@ function CesiumViewer({ onSelect }) {
       Color.LIGHTSTEELBLUE,
     ];
 
-    for (let i = 0; i < 5; i++) {
+    /*
+      Four apartment positions.
+
+      Small longitude / latitude offsets
+      move each apartment around the floor.
+    */
+
+    const apartmentOffsets = [
+      {
+        x: -0.00010,
+        y: 0.00007,
+      },
+
+      {
+        x: 0.00010,
+        y: 0.00007,
+      },
+
+      {
+        x: -0.00010,
+        y: -0.00007,
+      },
+
+      {
+        x: 0.00010,
+        y: -0.00007,
+      },
+    ];
+
+    // -------------------------
+    // CREATE 5 FLOORS
+    // -------------------------
+
+    for (
+      let floorIndex = 0;
+      floorIndex < 5;
+      floorIndex++
+    ) {
       const floorNumber =
-        i + 1;
+        floorIndex + 1;
 
       const floorString =
-        String(floorNumber).padStart(
-          2,
-          "0"
-        );
-
-      const unitNumber =
-        `${floorNumber}03`;
+        String(floorNumber)
+          .padStart(2, "0");
 
       const zMin =
-        i * floorHeight;
+        floorIndex * floorHeight;
 
       const zMax =
         zMin + floorHeight;
 
       const centerHeight =
         1 +
-        i * floorHeight +
+        floorIndex * floorHeight +
         floorHeight / 2;
 
+      // -------------------------
+      // FLOOR SLAB
+      // -------------------------
+
       viewer.entities.add({
-        id: `floor-${floorNumber}`,
+        id:
+          `floor-slab-${floorNumber}`,
 
         name:
           `Floor ${floorNumber}`,
@@ -160,74 +195,130 @@ function CesiumViewer({ onSelect }) {
           Cartesian3.fromDegrees(
             longitude,
             latitude,
-            centerHeight
+            centerHeight - 3.1
           ),
 
         box: {
           dimensions:
             new Cartesian3(
-              42,
-              32,
-              floorHeight - 0.5
+              46,
+              36,
+              0.3
             ),
 
           material:
-            floorColors[i]
-              .withAlpha(0.9),
+            Color.GRAY.withAlpha(0.75),
 
           outline: true,
 
           outlineColor:
             Color.WHITE,
         },
-
-        properties: {
-          type:
-            "Property Unit",
-
-          parentUlpIn:
-            parentULPIN,
-
-          propertyId:
-            `${parentULPIN}-B01-L${floorString}-U${unitNumber}`,
-
-          building:
-            "B01",
-
-          floor:
-            floorString,
-
-          unit:
-            unitNumber,
-
-          verticalRange:
-            `${zMin}m – ${zMax}m`,
-
-          validation:
-            "Valid",
-        },
       });
+
+      // -------------------------
+      // FOUR APARTMENTS
+      // -------------------------
+
+      for (
+        let unitIndex = 0;
+        unitIndex < 4;
+        unitIndex++
+      ) {
+        const unitNumber =
+          `${floorNumber}${String(
+            unitIndex + 1
+          ).padStart(2, "0")}`;
+
+        const offset =
+          apartmentOffsets[
+            unitIndex
+          ];
+
+        const propertyID =
+          `${parentULPIN}-B01-L${floorString}-U${unitNumber}`;
+
+        viewer.entities.add({
+          id:
+            `unit-${unitNumber}`,
+
+          name:
+            `Apartment ${unitNumber}`,
+
+          position:
+            Cartesian3.fromDegrees(
+              longitude + offset.x,
+              latitude + offset.y,
+              centerHeight
+            ),
+
+          box: {
+            dimensions:
+              new Cartesian3(
+                19,
+                14,
+                floorHeight - 0.8
+              ),
+
+            material:
+              floorColors[
+                floorIndex
+              ].withAlpha(0.9),
+
+            outline: true,
+
+            outlineColor:
+              Color.WHITE,
+          },
+
+          properties: {
+            type:
+              "Apartment",
+
+            parentUlpIn:
+              parentULPIN,
+
+            propertyId:
+              propertyID,
+
+            building:
+              "B01",
+
+            floor:
+              floorString,
+
+            unit:
+              unitNumber,
+
+            verticalRange:
+              `${zMin}m – ${zMax}m`,
+
+            validation:
+              "Valid",
+          },
+        });
+      }
     }
 
-    // =========================
+    // -------------------------
     // CAMERA
-    // =========================
+    // -------------------------
 
     viewer.zoomTo(
       viewer.entities,
 
       new HeadingPitchRange(
-        CesiumMath.toRadians(30),
+        CesiumMath.toRadians(35),
 
         CesiumMath.toRadians(-25),
 
-        140
+        170
       )
     );
 
-    // =========================
+    // -------------------------
     // CLICK HANDLER
-    // =========================
+    // -------------------------
 
     const handler =
       new ScreenSpaceEventHandler(
@@ -251,6 +342,7 @@ function CesiumViewer({ onSelect }) {
         const entity =
           pickedObject.id;
 
+        // Ignore floor slabs
         if (!entity.properties) {
           return;
         }
@@ -298,9 +390,9 @@ function CesiumViewer({ onSelect }) {
       ScreenSpaceEventType.LEFT_CLICK
     );
 
-    // =========================
+    // -------------------------
     // CLEANUP
-    // =========================
+    // -------------------------
 
     return () => {
       handler.destroy();

@@ -255,3 +255,4 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+frontend/public/cesiumStatic/
