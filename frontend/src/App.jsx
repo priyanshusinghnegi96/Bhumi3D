@@ -25,7 +25,9 @@ function App() {
     useState(null);
 
   function runValidation() {
-    setValidationTrigger((previous) => previous + 1);
+    setValidationTrigger(
+      (previous) => previous + 1
+    );
   }
 
   function resetValidation() {
@@ -34,7 +36,8 @@ function App() {
     setSelectedProperty({
       type: "Apartment",
       parentUlpIn: "ABC12345678901",
-      propertyId: "ABC12345678901-B01-L04-U403",
+      propertyId:
+        "ABC12345678901-B01-L04-U403",
       building: "B01",
       floor: "04",
       unit: "403",
@@ -42,21 +45,23 @@ function App() {
       validation: "Not checked",
     });
 
-    setResetTrigger((previous) => previous + 1);
+    setResetTrigger(
+      (previous) => previous + 1
+    );
   }
 
   return (
     <div className="app">
-      {/* =========================
-          NAVBAR
-      ========================== */}
+
+      {/* NAVBAR */}
 
       <header className="navbar">
         <div>
           <h1>Bhumi3D</h1>
 
           <p>
-            3D ULPIN & Vertical Property Mapping System
+            3D ULPIN & Vertical Property Mapping
+            System
           </p>
         </div>
 
@@ -65,15 +70,9 @@ function App() {
         </div>
       </header>
 
-      {/* =========================
-          MAIN APPLICATION
-      ========================== */}
-
       <main className="main-layout">
 
-        {/* =========================
-            LEFT SIDEBAR
-        ========================== */}
+        {/* LEFT SIDEBAR */}
 
         <aside className="sidebar">
 
@@ -104,13 +103,24 @@ function App() {
           </label>
 
           <label>
-            <input type="checkbox" />
-            LiDAR
+            <input
+              type="checkbox"
+              defaultChecked
+            />
+            Basement Parking
+          </label>
+
+          <label>
+            <input
+              type="checkbox"
+              defaultChecked
+            />
+            Underground Utilities
           </label>
 
           <label>
             <input type="checkbox" />
-            Underground Utilities
+            LiDAR
           </label>
 
           <hr />
@@ -120,7 +130,7 @@ function App() {
           <input
             className="search-input"
             type="text"
-            placeholder="Enter ULPIN or Property ID"
+            placeholder="ULPIN or 3D Property ID"
           />
 
           <button className="search-button">
@@ -129,15 +139,12 @@ function App() {
 
           <hr />
 
-          {/* =========================
-              TOPOLOGY VALIDATION
-          ========================== */}
-
           <h2>Topology Validation</h2>
 
           <p className="validation-help">
-            Check the 3D model for overlapping
-            property volumes.
+            Detect overlapping ownership
+            volumes and underground
+            infrastructure conflicts.
           </p>
 
           <button
@@ -151,33 +158,59 @@ function App() {
             className="reset-button"
             onClick={resetValidation}
           >
-            Reset
+            Reset Validation
           </button>
 
         </aside>
 
-        {/* =========================
-            3D VIEWER
-        ========================== */}
+        {/* CESIUM VIEWER */}
 
         <section className="map-area">
 
           <CesiumViewer
             onSelect={setSelectedProperty}
-            validationTrigger={validationTrigger}
-            resetTrigger={resetTrigger}
-            onValidationResult={setValidationResult}
+            validationTrigger={
+              validationTrigger
+            }
+            resetTrigger={
+              resetTrigger
+            }
+            onValidationResult={
+              setValidationResult
+            }
           />
 
           <div className="viewer-label">
             3D Volumetric Cadastre
           </div>
 
+          <div className="viewer-legend">
+
+            <div>
+              <span className="legend-blue" />
+              Apartments
+            </div>
+
+            <div>
+              <span className="legend-orange" />
+              Basement Parking
+            </div>
+
+            <div>
+              <span className="legend-cyan" />
+              Underground Utility
+            </div>
+
+            <div>
+              <span className="legend-red" />
+              Conflict
+            </div>
+
+          </div>
+
         </section>
 
-        {/* =========================
-            RIGHT PANEL
-        ========================== */}
+        {/* RIGHT PANEL */}
 
         <aside className="property-panel">
 
@@ -185,6 +218,7 @@ function App() {
 
           <div className="property-item">
             <span>Type</span>
+
             <strong>
               {selectedProperty.type}
             </strong>
@@ -192,6 +226,7 @@ function App() {
 
           <div className="property-item">
             <span>Parent ULPIN</span>
+
             <strong>
               {selectedProperty.parentUlpIn}
             </strong>
@@ -199,6 +234,7 @@ function App() {
 
           <div className="property-item">
             <span>3D Property ID</span>
+
             <strong>
               {selectedProperty.propertyId}
             </strong>
@@ -206,13 +242,15 @@ function App() {
 
           <div className="property-item">
             <span>Building</span>
+
             <strong>
               {selectedProperty.building}
             </strong>
           </div>
 
           <div className="property-item">
-            <span>Floor</span>
+            <span>Floor / Level</span>
+
             <strong>
               {selectedProperty.floor}
             </strong>
@@ -220,6 +258,7 @@ function App() {
 
           <div className="property-item">
             <span>Unit</span>
+
             <strong>
               {selectedProperty.unit}
             </strong>
@@ -227,8 +266,11 @@ function App() {
 
           <div className="property-item">
             <span>Vertical Range</span>
+
             <strong>
-              {selectedProperty.verticalRange}
+              {
+                selectedProperty.verticalRange
+              }
             </strong>
           </div>
 
@@ -237,22 +279,23 @@ function App() {
 
             <strong
               className={
-                selectedProperty.validation.includes(
-                  "Invalid"
-                )
+                selectedProperty.validation
+                  .toLowerCase()
+                  .includes("invalid")
                   ? "invalid"
                   : "valid"
               }
             >
-              {selectedProperty.validation}
+              {
+                selectedProperty.validation
+              }
             </strong>
           </div>
 
-          {/* =========================
-              VALIDATION RESULT
-          ========================== */}
+          {/* VALIDATION RESULTS */}
 
           {validationResult && (
+
             <div
               className={
                 validationResult.valid
@@ -260,49 +303,70 @@ function App() {
                   : "validation-card error"
               }
             >
+
               <h3>
                 {validationResult.valid
                   ? "✓ Model Valid"
-                  : "⚠ Topology Conflict"}
+                  : `⚠ ${validationResult.conflicts.length} Conflicts Detected`}
               </h3>
 
-              {validationResult.valid ? (
+              {validationResult.valid && (
                 <p>
-                  No overlapping property
-                  volumes were detected.
+                  No volumetric conflicts
+                  were detected.
                 </p>
-              ) : (
-                <>
-                  <p>
-                    <strong>Unit:</strong>{" "}
-                    {validationResult.unitA}
-                  </p>
-
-                  <p>
-                    <strong>
-                      Conflicts with:
-                    </strong>{" "}
-                    {validationResult.unitB}
-                  </p>
-
-                  <p>
-                    <strong>Issue:</strong>{" "}
-                    3D volumetric overlap
-                  </p>
-
-                  <p>
-                    <strong>
-                      Overlap Volume:
-                    </strong>{" "}
-                    {validationResult.volume} m³
-                  </p>
-
-                  <p>
-                    <strong>Severity:</strong>{" "}
-                    HIGH
-                  </p>
-                </>
               )}
+
+              {!validationResult.valid &&
+                validationResult.conflicts.map(
+                  (conflict, index) => (
+
+                    <div
+                      className="conflict-item"
+                      key={index}
+                    >
+
+                      <div className="conflict-number">
+                        Conflict {index + 1}
+                      </div>
+
+                      <p>
+                        <strong>Type:</strong>{" "}
+                        {conflict.type}
+                      </p>
+
+                      <p>
+                        <strong>
+                          Object A:
+                        </strong>{" "}
+                        {conflict.objectA}
+                      </p>
+
+                      <p>
+                        <strong>
+                          Object B:
+                        </strong>{" "}
+                        {conflict.objectB}
+                      </p>
+
+                      <p>
+                        <strong>
+                          Overlap:
+                        </strong>{" "}
+                        {conflict.volume} m³
+                      </p>
+
+                      <p>
+                        <strong>
+                          Severity:
+                        </strong>{" "}
+                        HIGH
+                      </p>
+
+                    </div>
+                  )
+                )}
+
             </div>
           )}
 

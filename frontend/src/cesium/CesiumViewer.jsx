@@ -21,43 +21,124 @@ function CesiumViewer({
   resetTrigger,
   onValidationResult,
 }) {
-  const cesiumContainer = useRef(null);
+  const cesiumContainer =
+    useRef(null);
 
-  const viewerRef = useRef(null);
+  const viewerRef =
+    useRef(null);
 
-  const apartmentDataRef = useRef([]);
+  const spatialObjectsRef =
+    useRef([]);
 
-  const apartmentEntitiesRef = useRef([]);
+  const clickHandlerRef =
+    useRef(null);
 
-  const clickHandlerRef = useRef(null);
+  // ======================================
+  // HELPER: AABB COLLISION
+  // ======================================
 
-  // =====================================
-  // CREATE CESIUM VIEWER
-  // =====================================
+  function calculateOverlap(a, b) {
+    const aMinX =
+      a.centerX - a.width / 2;
+
+    const aMaxX =
+      a.centerX + a.width / 2;
+
+    const bMinX =
+      b.centerX - b.width / 2;
+
+    const bMaxX =
+      b.centerX + b.width / 2;
+
+    const aMinY =
+      a.centerY - a.depth / 2;
+
+    const aMaxY =
+      a.centerY + a.depth / 2;
+
+    const bMinY =
+      b.centerY - b.depth / 2;
+
+    const bMaxY =
+      b.centerY + b.depth / 2;
+
+    const aMinZ =
+      a.centerZ - a.height / 2;
+
+    const aMaxZ =
+      a.centerZ + a.height / 2;
+
+    const bMinZ =
+      b.centerZ - b.height / 2;
+
+    const bMaxZ =
+      b.centerZ + b.height / 2;
+
+    const overlapX =
+      Math.min(aMaxX, bMaxX) -
+      Math.max(aMinX, bMinX);
+
+    const overlapY =
+      Math.min(aMaxY, bMaxY) -
+      Math.max(aMinY, bMinY);
+
+    const overlapZ =
+      Math.min(aMaxZ, bMaxZ) -
+      Math.max(aMinZ, bMinZ);
+
+    if (
+      overlapX > 0 &&
+      overlapY > 0 &&
+      overlapZ > 0
+    ) {
+      return (
+        overlapX *
+        overlapY *
+        overlapZ
+      );
+    }
+
+    return 0;
+  }
+
+  // ======================================
+  // CREATE VIEWER
+  // ======================================
 
   useEffect(() => {
-    const viewer = new Viewer(
-      cesiumContainer.current,
-      {
-        globe: false,
-        baseLayerPicker: false,
-        geocoder: false,
-        animation: false,
-        timeline: false,
-        navigationHelpButton: false,
-        sceneModePicker: false,
-        homeButton: false,
-        skyBox: false,
-        skyAtmosphere: false,
-        infoBox: false,
-        selectionIndicator: false,
-      }
-    );
 
-    viewerRef.current = viewer;
+    spatialObjectsRef.current = [];
+
+    const viewer =
+      new Viewer(
+        cesiumContainer.current,
+        {
+          globe: false,
+
+          baseLayerPicker: false,
+          geocoder: false,
+          animation: false,
+          timeline: false,
+
+          navigationHelpButton: false,
+          sceneModePicker: false,
+          homeButton: false,
+
+          skyBox: false,
+          skyAtmosphere: false,
+
+          infoBox: false,
+          selectionIndicator: false,
+        }
+      );
+
+    viewerRef.current =
+      viewer;
 
     viewer.scene.backgroundColor =
-      Color.fromCssColorString("#87CEEB");
+      Color.fromCssColorString(
+        "#87CEEB"
+      );
 
     const longitude = 77.209;
     const latitude = 28.6139;
@@ -65,13 +146,9 @@ function CesiumViewer({
     const parentULPIN =
       "ABC12345678901";
 
-    /*
-      Converts metre offsets into
-      small latitude/longitude changes.
-
-      This is sufficient for our
-      small SIH demonstration model.
-    */
+    // ======================================
+    // METRE OFFSET → GPS POSITION
+    // ======================================
 
     function offsetPosition(
       xMeters,
@@ -86,20 +163,26 @@ function CesiumViewer({
         (
           111320 *
           Math.cos(
-            CesiumMath.toRadians(latitude)
+            CesiumMath.toRadians(
+              latitude
+            )
           )
         );
 
       return Cartesian3.fromDegrees(
-        longitude + longitudeOffset,
-        latitude + latitudeOffset,
+        longitude +
+          longitudeOffset,
+
+        latitude +
+          latitudeOffset,
+
         height
       );
     }
 
-    // =====================================
+    // ======================================
     // LAND PARCEL
-    // =====================================
+    // ======================================
 
     viewer.entities.add({
       id: "parcel-001",
@@ -122,7 +205,8 @@ function CesiumViewer({
           ),
 
         material:
-          Color.LIMEGREEN.withAlpha(0.5),
+          Color.LIMEGREEN
+            .withAlpha(0.45),
 
         outline: true,
 
@@ -157,14 +241,16 @@ function CesiumViewer({
       },
     });
 
-    // =====================================
-    // BUILDING DATA
-    // =====================================
+    // ======================================
+    // APARTMENTS
+    // ======================================
 
     const floorHeight = 7;
 
     const apartmentWidth = 20;
+
     const apartmentDepth = 15;
+
     const apartmentHeight = 6.2;
 
     const floorColors = [
@@ -174,18 +260,6 @@ function CesiumViewer({
       Color.STEELBLUE,
       Color.LIGHTSTEELBLUE,
     ];
-
-    /*
-      Normal apartment centres.
-
-             NORTH
-
-         01        02
-
-         03        04
-
-             SOUTH
-    */
 
     const standardPositions = [
       {
@@ -209,10 +283,6 @@ function CesiumViewer({
       },
     ];
 
-    // =====================================
-    // CREATE FLOORS
-    // =====================================
-
     for (
       let floorIndex = 0;
       floorIndex < 5;
@@ -226,10 +296,12 @@ function CesiumViewer({
           .padStart(2, "0");
 
       const zMin =
-        floorIndex * floorHeight;
+        floorIndex *
+        floorHeight;
 
       const zMax =
-        zMin + floorHeight;
+        zMin +
+        floorHeight;
 
       const centerHeight =
         zMin +
@@ -241,9 +313,6 @@ function CesiumViewer({
       viewer.entities.add({
         id:
           `slab-${floorNumber}`,
-
-        name:
-          `Floor ${floorNumber} Slab`,
 
         position:
           offsetPosition(
@@ -261,7 +330,8 @@ function CesiumViewer({
             ),
 
           material:
-            Color.GRAY.withAlpha(0.6),
+            Color.GRAY
+              .withAlpha(0.6),
 
           outline: true,
 
@@ -270,15 +340,14 @@ function CesiumViewer({
         },
       });
 
-      // =================================
-      // CREATE 4 APARTMENTS
-      // =================================
+      // Apartments
 
       for (
         let unitIndex = 0;
         unitIndex < 4;
         unitIndex++
       ) {
+
         const unitNumber =
           `${floorNumber}${String(
             unitIndex + 1
@@ -295,16 +364,10 @@ function CesiumViewer({
           ].y;
 
         /*
-          INTENTIONAL DEMO ERROR
+          INTENTIONAL ERROR:
 
-          Apartment 404 is shifted
+          Shift Apartment 404
           towards Apartment 403.
-
-          Normal x = +10.5 metres.
-
-          We change it to +7 metres.
-
-          This makes 403 and 404 overlap.
         */
 
         if (
@@ -316,6 +379,11 @@ function CesiumViewer({
 
         const propertyId =
           `${parentULPIN}-B01-L${floorString}-U${unitNumber}`;
+
+        const normalColor =
+          floorColors[
+            floorIndex
+          ].withAlpha(0.9);
 
         const entity =
           viewer.entities.add({
@@ -341,9 +409,7 @@ function CesiumViewer({
                 ),
 
               material:
-                floorColors[
-                  floorIndex
-                ].withAlpha(0.9),
+                normalColor,
 
               outline: true,
 
@@ -378,35 +444,21 @@ function CesiumViewer({
             },
           });
 
-        // Save original colour
-        entity.originalColor =
-          floorColors[
-            floorIndex
-          ].withAlpha(0.9);
-
-        apartmentEntitiesRef.current.push(
-          entity
-        );
-
-        /*
-          Save a simple 3D bounding box.
-
-          This is what our validator
-          actually checks.
-        */
-
-        apartmentDataRef.current.push({
-          unit:
+        spatialObjectsRef.current.push({
+          id:
             unitNumber,
 
-          entity:
-            entity,
+          category:
+            "apartment",
+
+          entity,
+
+          normalColor,
+
+          propertyId,
 
           floor:
             floorString,
-
-          propertyId:
-            propertyId,
 
           centerX:
             x,
@@ -426,18 +478,282 @@ function CesiumViewer({
           height:
             apartmentHeight,
 
-          zMin:
-            zMin,
+          zMin,
 
-          zMax:
-            zMax,
+          zMax,
         });
       }
     }
 
-    // =====================================
+    // ======================================
+    // BASEMENT PARKING
+    // ======================================
+
+    const parkingWidth = 20;
+    const parkingDepth = 15;
+    const parkingHeight = 5;
+
+    const parkingPositions = [
+      {
+        x: -10.5,
+        y: 8,
+      },
+
+      {
+        x: 10.5,
+        y: 8,
+      },
+
+      {
+        x: -10.5,
+        y: -8,
+      },
+
+      {
+        x: 10.5,
+        y: -8,
+      },
+    ];
+
+    for (
+      let i = 0;
+      i < 4;
+      i++
+    ) {
+      const parkingNumber =
+        `P0${i + 1}`;
+
+      const position =
+        parkingPositions[i];
+
+      const normalColor =
+        Color.ORANGE
+          .withAlpha(0.9);
+
+      const entity =
+        viewer.entities.add({
+          id:
+            `parking-${parkingNumber}`,
+
+          name:
+            `Parking ${parkingNumber}`,
+
+          position:
+            offsetPosition(
+              position.x,
+              position.y,
+              -3.5
+            ),
+
+          box: {
+            dimensions:
+              new Cartesian3(
+                parkingWidth,
+                parkingDepth,
+                parkingHeight
+              ),
+
+            material:
+              normalColor,
+
+            outline: true,
+
+            outlineColor:
+              Color.WHITE,
+          },
+
+          properties: {
+            type:
+              "Basement Parking",
+
+            parentUlpIn:
+              parentULPIN,
+
+            propertyId:
+              `${parentULPIN}-B01-B01-${parkingNumber}`,
+
+            building:
+              "B01",
+
+            floor:
+              "Basement 1",
+
+            unit:
+              parkingNumber,
+
+            verticalRange:
+              "-6m – -1m",
+
+            validation:
+              "Not checked",
+          },
+        });
+
+      spatialObjectsRef.current.push({
+        id:
+          parkingNumber,
+
+        category:
+          "parking",
+
+        entity,
+
+        normalColor,
+
+        propertyId:
+          `${parentULPIN}-B01-B01-${parkingNumber}`,
+
+        floor:
+          "Basement 1",
+
+        centerX:
+          position.x,
+
+        centerY:
+          position.y,
+
+        centerZ:
+          -3.5,
+
+        width:
+          parkingWidth,
+
+        depth:
+          parkingDepth,
+
+        height:
+          parkingHeight,
+
+        zMin:
+          -6,
+
+        zMax:
+          -1,
+      });
+    }
+
+    // ======================================
+    // UNDERGROUND WATER UTILITY
+    // ======================================
+
+    /*
+      The utility is intentionally
+      placed inside Parking P03.
+
+      This creates a second
+      demonstrable topology conflict.
+    */
+
+    const utilityColor =
+      Color.CYAN
+        .withAlpha(0.9);
+
+    const utilityEntity =
+      viewer.entities.add({
+        id:
+          "utility-water-001",
+
+        name:
+          "Water Utility W-001",
+
+        position:
+          offsetPosition(
+            -10.5,
+            -8,
+            -5
+          ),
+
+        box: {
+          dimensions:
+            new Cartesian3(
+              18,
+              4,
+              2
+            ),
+
+          material:
+            utilityColor,
+
+          outline: true,
+
+          outlineColor:
+            Color.WHITE,
+        },
+
+        properties: {
+          type:
+            "Underground Utility",
+
+          parentUlpIn:
+            parentULPIN,
+
+          propertyId:
+            `${parentULPIN}-UG-WATER-001`,
+
+          building:
+            "—",
+
+          floor:
+            "Underground",
+
+          unit:
+            "W-001",
+
+          verticalRange:
+            "-6m – -4m",
+
+          validation:
+            "Not checked",
+        },
+      });
+
+    spatialObjectsRef.current.push({
+      id:
+        "W-001",
+
+      category:
+        "utility",
+
+      entity:
+        utilityEntity,
+
+      normalColor:
+        utilityColor,
+
+      propertyId:
+        `${parentULPIN}-UG-WATER-001`,
+
+      floor:
+        "Underground",
+
+      centerX:
+        -10.5,
+
+      centerY:
+        -8,
+
+      centerZ:
+        -5,
+
+      width:
+        18,
+
+      depth:
+        4,
+
+      height:
+        2,
+
+      zMin:
+        -6,
+
+      zMax:
+        -4,
+    });
+
+    // ======================================
     // CAMERA
-    // =====================================
+    // ======================================
 
     viewer.zoomTo(
       viewer.entities,
@@ -445,15 +761,15 @@ function CesiumViewer({
       new HeadingPitchRange(
         CesiumMath.toRadians(35),
 
-        CesiumMath.toRadians(-25),
+        CesiumMath.toRadians(-18),
 
-        175
+        210
       )
     );
 
-    // =====================================
+    // ======================================
     // CLICK HANDLER
-    // =====================================
+    // ======================================
 
     const handler =
       new ScreenSpaceEventHandler(
@@ -465,6 +781,7 @@ function CesiumViewer({
 
     handler.setInputAction(
       (movement) => {
+
         const pickedObject =
           viewer.scene.pick(
             movement.position
@@ -525,55 +842,63 @@ function CesiumViewer({
       ScreenSpaceEventType.LEFT_CLICK
     );
 
-    // =====================================
-    // CLEANUP
-    // =====================================
-
     return () => {
+
       if (
         clickHandlerRef.current
       ) {
-        clickHandlerRef.current.destroy();
+        clickHandlerRef.current
+          .destroy();
       }
 
-      if (!viewer.isDestroyed()) {
+      if (
+        !viewer.isDestroyed()
+      ) {
         viewer.destroy();
       }
     };
+
   }, [onSelect]);
 
-  // =====================================
-  // TOPOLOGY VALIDATION
-  // =====================================
+  // ======================================
+  // VALIDATION ENGINE
+  // ======================================
 
   useEffect(() => {
-    if (validationTrigger === 0) {
+
+    if (
+      validationTrigger === 0
+    ) {
       return;
     }
 
-    const apartments =
-      apartmentDataRef.current;
+    const objects =
+      spatialObjectsRef.current;
 
-    /*
-      Reset all apartments before
-      performing the test.
-    */
+    // Reset colours/status
 
     for (
-      const apartment of apartments
+      const object of objects
     ) {
-      apartment.entity.box.material =
-        apartment.entity.originalColor;
+      object.entity.box.material =
+        object.normalColor;
 
-      apartment.entity.properties.validation =
+      object.entity.properties.validation =
         "Valid";
     }
 
     const conflicts = [];
 
-    // ---------------------------------
-    // Compare every apartment pair
-    // ---------------------------------
+    // --------------------------------------
+    // APARTMENT vs APARTMENT
+    // --------------------------------------
+
+    const apartments =
+      objects.filter(
+        (object) =>
+          object.category ===
+          "apartment"
+      );
 
     for (
       let i = 0;
@@ -591,10 +916,8 @@ function CesiumViewer({
         const b =
           apartments[j];
 
-        /*
-          Different floors cannot
-          conflict in this demonstration.
-        */
+        // Only compare apartments
+        // on the same floor.
 
         if (
           a.floor !== b.floor
@@ -602,201 +925,191 @@ function CesiumViewer({
           continue;
         }
 
-        // Calculate 3D boundaries
-
-        const aMinX =
-          a.centerX -
-          a.width / 2;
-
-        const aMaxX =
-          a.centerX +
-          a.width / 2;
-
-        const bMinX =
-          b.centerX -
-          b.width / 2;
-
-        const bMaxX =
-          b.centerX +
-          b.width / 2;
-
-        const aMinY =
-          a.centerY -
-          a.depth / 2;
-
-        const aMaxY =
-          a.centerY +
-          a.depth / 2;
-
-        const bMinY =
-          b.centerY -
-          b.depth / 2;
-
-        const bMaxY =
-          b.centerY +
-          b.depth / 2;
-
-        const aMinZ =
-          a.centerZ -
-          a.height / 2;
-
-        const aMaxZ =
-          a.centerZ +
-          a.height / 2;
-
-        const bMinZ =
-          b.centerZ -
-          b.height / 2;
-
-        const bMaxZ =
-          b.centerZ +
-          b.height / 2;
-
-        // Calculate overlap on X
-
-        const overlapX =
-          Math.min(
-            aMaxX,
-            bMaxX
-          ) -
-          Math.max(
-            aMinX,
-            bMinX
+        const volume =
+          calculateOverlap(
+            a,
+            b
           );
 
-        // Calculate overlap on Y
-
-        const overlapY =
-          Math.min(
-            aMaxY,
-            bMaxY
-          ) -
-          Math.max(
-            aMinY,
-            bMinY
-          );
-
-        // Calculate overlap on Z
-
-        const overlapZ =
-          Math.min(
-            aMaxZ,
-            bMaxZ
-          ) -
-          Math.max(
-            aMinZ,
-            bMinZ
-          );
-
-        /*
-          All three dimensions must
-          overlap for a real 3D conflict.
-        */
-
-        if (
-          overlapX > 0 &&
-          overlapY > 0 &&
-          overlapZ > 0
-        ) {
-          const volume =
-            overlapX *
-            overlapY *
-            overlapZ;
+        if (volume > 0) {
 
           conflicts.push({
+            type:
+              "3D Ownership Volume Overlap",
+
+            objectA:
+              `Apartment ${a.id}`,
+
+            objectB:
+              `Apartment ${b.id}`,
+
+            volume:
+              volume.toFixed(1),
+
             a,
             b,
-            volume,
           });
         }
       }
     }
 
-    // =================================
-    // NO CONFLICT
-    // =================================
+    // --------------------------------------
+    // PARKING vs UTILITY
+    // --------------------------------------
+
+    const parking =
+      objects.filter(
+        (object) =>
+          object.category ===
+          "parking"
+      );
+
+    const utilities =
+      objects.filter(
+        (object) =>
+          object.category ===
+          "utility"
+      );
+
+    for (
+      const parkingObject
+      of parking
+    ) {
+      for (
+        const utilityObject
+        of utilities
+      ) {
+
+        const volume =
+          calculateOverlap(
+            parkingObject,
+            utilityObject
+          );
+
+        if (volume > 0) {
+
+          conflicts.push({
+            type:
+              "Underground Infrastructure Collision",
+
+            objectA:
+              `Parking ${parkingObject.id}`,
+
+            objectB:
+              `Utility ${utilityObject.id}`,
+
+            volume:
+              volume.toFixed(1),
+
+            a:
+              parkingObject,
+
+            b:
+              utilityObject,
+          });
+        }
+      }
+    }
+
+    // ======================================
+    // NO CONFLICTS
+    // ======================================
 
     if (
       conflicts.length === 0
     ) {
       onValidationResult({
         valid: true,
+
+        conflicts: [],
       });
 
       return;
     }
 
-    // =================================
-    // CONFLICT FOUND
-    // =================================
+    // ======================================
+    // HIGHLIGHT ALL CONFLICTS
+    // ======================================
 
-    const firstConflict =
-      conflicts[0];
+    for (
+      const conflict of conflicts
+    ) {
 
-    const apartmentA =
-      firstConflict.a;
+      conflict.a.entity.box.material =
+        Color.RED
+          .withAlpha(0.95);
 
-    const apartmentB =
-      firstConflict.b;
+      conflict.b.entity.box.material =
+        Color.RED
+          .withAlpha(0.95);
 
-    // Turn both red
+      conflict.a.entity.properties.validation =
+        "Invalid – Conflict";
 
-    apartmentA.entity.box.material =
-      Color.RED.withAlpha(0.95);
-
-    apartmentB.entity.box.material =
-      Color.RED.withAlpha(0.95);
-
-    apartmentA.entity.properties.validation =
-      "Invalid – Overlap";
-
-    apartmentB.entity.properties.validation =
-      "Invalid – Overlap";
-
-    const overlapVolume =
-      firstConflict.volume.toFixed(1);
-
-    // Send result to App.jsx
+      conflict.b.entity.properties.validation =
+        "Invalid – Conflict";
+    }
 
     onValidationResult({
       valid: false,
 
-      unitA:
-        apartmentA.unit,
+      conflicts:
+        conflicts.map(
+          (conflict) => ({
+            type:
+              conflict.type,
 
-      unitB:
-        apartmentB.unit,
+            objectA:
+              conflict.objectA,
 
-      volume:
-        overlapVolume,
+            objectB:
+              conflict.objectB,
+
+            volume:
+              conflict.volume,
+          })
+        ),
     });
 
-    // Automatically show first conflict
+    // Automatically select
+    // the first conflict.
+
+    const first =
+      conflicts[0].a;
 
     onSelect({
       type:
-        "Apartment",
+        first.category ===
+        "apartment"
+          ? "Apartment"
+          : first.category ===
+            "parking"
+            ? "Basement Parking"
+            : "Underground Utility",
 
       parentUlpIn:
         "ABC12345678901",
 
       propertyId:
-        apartmentA.propertyId,
+        first.propertyId,
 
       building:
-        "B01",
+        first.category ===
+        "utility"
+          ? "—"
+          : "B01",
 
       floor:
-        apartmentA.floor,
+        first.floor,
 
       unit:
-        apartmentA.unit,
+        first.id,
 
       verticalRange:
-        `${apartmentA.zMin}m – ${apartmentA.zMax}m`,
+        `${first.zMin}m – ${first.zMax}m`,
 
       validation:
-        "Invalid – Overlap",
+        "Invalid – Conflict",
     });
 
   }, [
@@ -805,23 +1118,27 @@ function CesiumViewer({
     onValidationResult,
   ]);
 
-  // =====================================
-  // RESET VALIDATION
-  // =====================================
+  // ======================================
+  // RESET
+  // ======================================
 
   useEffect(() => {
-    if (resetTrigger === 0) {
+
+    if (
+      resetTrigger === 0
+    ) {
       return;
     }
 
     for (
-      const apartment of
-      apartmentDataRef.current
+      const object of
+      spatialObjectsRef.current
     ) {
-      apartment.entity.box.material =
-        apartment.entity.originalColor;
 
-      apartment.entity.properties.validation =
+      object.entity.box.material =
+        object.normalColor;
+
+      object.entity.properties.validation =
         "Not checked";
     }
 

@@ -8,9 +8,7 @@
   background: #f4f6f8;
 }
 
-/* =========================
-   NAVBAR
-========================= */
+/* NAVBAR */
 
 .navbar {
   height: 72px;
@@ -49,24 +47,20 @@
   font-weight: bold;
 }
 
-/* =========================
-   MAIN LAYOUT
-========================= */
+/* MAIN */
 
 .main-layout {
   display: grid;
 
   grid-template-columns:
-    220px
+    225px
     1fr
-    300px;
+    320px;
 
   height: calc(100vh - 72px);
 }
 
-/* =========================
-   SIDEBAR
-========================= */
+/* SIDEBAR */
 
 .sidebar {
   background: white;
@@ -87,9 +81,9 @@
 .sidebar label {
   display: block;
 
-  margin: 15px 0;
+  margin: 14px 0;
 
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .sidebar input[type="checkbox"] {
@@ -101,12 +95,10 @@
 
   border-top: 1px solid #ddd;
 
-  margin: 24px 0;
+  margin: 22px 0;
 }
 
-/* =========================
-   SEARCH
-========================= */
+/* SEARCH */
 
 .search-input {
   width: 100%;
@@ -114,9 +106,10 @@
   padding: 10px;
 
   border: 1px solid #bbb;
+
   border-radius: 5px;
 
-  margin-bottom: 10px;
+  margin-bottom: 9px;
 }
 
 .search-button {
@@ -125,7 +118,6 @@
   padding: 10px;
 
   background: #123524;
-
   color: white;
 
   border: none;
@@ -135,20 +127,14 @@
   cursor: pointer;
 }
 
-.search-button:hover {
-  background: #20583d;
-}
-
-/* =========================
-   VALIDATION BUTTONS
-========================= */
+/* VALIDATION */
 
 .validation-help {
-  font-size: 12px;
-
   color: #666;
 
-  line-height: 1.5;
+  font-size: 12px;
+
+  line-height: 1.45;
 }
 
 .validate-button {
@@ -156,8 +142,7 @@
 
   padding: 11px;
 
-  background: #b83232;
-
+  background: #b52b2b;
   color: white;
 
   border: none;
@@ -172,7 +157,7 @@
 }
 
 .validate-button:hover {
-  background: #8f2424;
+  background: #922020;
 }
 
 .reset-button {
@@ -182,8 +167,6 @@
 
   background: white;
 
-  color: #444;
-
   border: 1px solid #aaa;
 
   border-radius: 5px;
@@ -191,13 +174,7 @@
   cursor: pointer;
 }
 
-.reset-button:hover {
-  background: #f1f1f1;
-}
-
-/* =========================
-   CESIUM VIEWER
-========================= */
+/* CESIUM */
 
 .map-area {
   position: relative;
@@ -242,9 +219,62 @@
   pointer-events: none;
 }
 
-/* =========================
-   PROPERTY PANEL
-========================= */
+/* LEGEND */
+
+.viewer-legend {
+  position: absolute;
+
+  left: 14px;
+  bottom: 35px;
+
+  z-index: 10;
+
+  background:
+    rgba(255, 255, 255, 0.92);
+
+  padding: 10px 12px;
+
+  border-radius: 6px;
+
+  font-size: 11px;
+}
+
+.viewer-legend div {
+  display: flex;
+
+  align-items: center;
+
+  margin: 5px 0;
+}
+
+.viewer-legend span {
+  width: 11px;
+  height: 11px;
+
+  display: inline-block;
+
+  margin-right: 7px;
+
+  border-radius: 2px;
+}
+
+.legend-blue {
+  background: #4682b4;
+}
+
+.legend-orange {
+  background: orange;
+}
+
+.legend-cyan {
+  background: cyan;
+}
+
+.legend-red {
+  background: red;
+}
+
+/* PROPERTY PANEL */
 
 .property-panel {
   background: white;
@@ -257,28 +287,27 @@
 }
 
 .property-panel h2 {
-  font-size: 18px;
-
   margin-top: 0;
 
   padding-bottom: 12px;
 
-  border-bottom:
-    1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+
+  font-size: 18px;
 }
 
 .property-item {
-  margin-bottom: 17px;
+  margin-bottom: 16px;
 }
 
 .property-item span {
   display: block;
 
-  font-size: 12px;
+  margin-bottom: 4px;
 
   color: #777;
 
-  margin-bottom: 4px;
+  font-size: 12px;
 }
 
 .property-item strong {
@@ -290,25 +319,23 @@
 }
 
 .valid {
-  color: #17823b;
+  color: #16813a;
 }
 
 .invalid {
-  color: #c52323;
+  color: #c22424;
 }
 
-/* =========================
-   VALIDATION RESULT CARD
-========================= */
+/* VALIDATION CARD */
 
 .validation-card {
-  margin-top: 25px;
+  margin-top: 24px;
 
-  padding: 15px;
+  padding: 14px;
 
   border-radius: 7px;
 
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .validation-card h3 {
@@ -317,25 +344,48 @@
   font-size: 15px;
 }
 
-.validation-card p {
-  margin:
-    7px 0;
-}
-
 .validation-card.error {
   background: #fff0f0;
 
-  border:
-    1px solid #df8a8a;
+  border: 1px solid #db8d8d;
 
-  color: #9f1d1d;
+  color: #8f1f1f;
 }
 
 .validation-card.success {
   background: #effaf1;
 
-  border:
-    1px solid #8ac99a;
+  border: 1px solid #8ac99a;
 
   color: #176b30;
+}
+
+.conflict-item {
+  padding:
+    10px 0;
+
+  border-top:
+    1px solid rgba(
+      150,
+      40,
+      40,
+      0.25
+    );
+}
+
+.conflict-item:first-of-type {
+  border-top: none;
+}
+
+.conflict-item p {
+  margin:
+    5px 0;
+}
+
+.conflict-number {
+  font-weight: bold;
+
+  margin-bottom: 6px;
+
+  color: #711616;
 }
