@@ -214,5 +214,44 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# ==============================
+# Bhumi3D additional ignores
+# ==============================
+
+# React / Node
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Environment secrets
+.env
+.env.local
+
+# GIS / LiDAR large files
+*.las
+*.laz
+*.tif
+*.tiff
+*.pcd
+
+# ML models
+*.pt
+*.pth
+*.onnx
+
+# Generated 3D models
+*.glb
+*.gltf
+
+# Temporary files
+temp/
+tmp/
+cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
 # Streamlit
 .streamlit/secrets.toml
