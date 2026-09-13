@@ -1751,3 +1751,120 @@ def generate_vertical_parcels(
             status_code=500,
             detail=str(error),
         )
+        # =========================================================
+# BUILDING ↔ PARENT PLOT CADASTRAL VALIDATION
+# =========================================================
+
+@app.get("/validate/cadastral")
+def validate_cadastral_boundaries():
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT
+                        building_feature_id,
+                        building_name,
+                        building_code,
+                        parent_ulpin,
+                        plot_name,
+                        is_inside_parent_plot,
+                        outside_area_m2,
+                        building_area_m2,
+                        validation_status
+
+                    FROM building_plot_validation
+
+                    ORDER BY building_code;
+                    """
+                )
+
+                rows = cursor.fetchall()
+
+
+        buildings = []
+
+        violations = []
+
+
+        for row in rows:
+
+            building = {
+                "feature_id": row[0],
+                "building_name": row[1],
+                "building_code": row[2],
+                "parent_ulpin": row[3],
+                "plot_name": row[4],
+                "is_inside_parent_plot": row[5],
+
+                "outside_area_m2": (
+                    float(row[6])
+                    if row[6] is not None
+                    else None
+                ),
+
+                "building_area_m2": (
+                    float(row[7])
+                    if row[7] is not None
+                    else None
+                ),
+
+                "status": row[8],
+            }
+
+
+            buildings.append(
+                building
+            )
+
+
+            if (
+                row[8]
+                != "VALID"
+            ):
+
+                violations.append(
+                    building
+                )
+
+
+        return {
+            "valid": (
+                len(violations) == 0
+            ),
+
+            "engine": "PostGIS",
+
+            "rule": (
+                "Building footprint must be "
+                "completely covered by its "
+                "declared parent land parcel"
+            ),
+
+            "building_count":
+                len(buildings),
+
+            "violation_count":
+                len(violations),
+
+            "buildings":
+                buildings,
+
+            "violations":
+                violations,
+        }
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Cadastral validation error: "
+                f"{error}"
+            ),
+        )

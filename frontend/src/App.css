@@ -111,12 +111,12 @@ select {
   white-space: nowrap;
 }
 
-.generator-button {
-  background: #e8c758;
-}
-
 .header-button:hover {
   filter: brightness(1.06);
+}
+
+.generator-button {
+  background: #e8c758;
 }
 
 
@@ -152,9 +152,9 @@ select {
   width: 8px;
   height: 8px;
 
-  border-radius: 50%;
-
   display: inline-block;
+
+  border-radius: 50%;
 }
 
 .backend-status.online
@@ -213,9 +213,9 @@ select {
   display: grid;
 
   grid-template-columns:
-    245px
+    255px
     minmax(0, 1fr)
-    285px;
+    310px;
 
   overflow: hidden;
 }
@@ -313,7 +313,7 @@ select {
 
 
 /* =========================================================
-   SEARCH RESULT CARDS
+   SEARCH RESULTS
    ========================================================= */
 
 .search-results {
@@ -398,6 +398,77 @@ select {
   line-height: 1.35;
 
   word-break: break-all;
+}
+
+
+/* =========================================================
+   HIERARCHY TREE
+   ========================================================= */
+
+.hierarchy-tree {
+  display: flex;
+  flex-direction: column;
+
+  gap: 8px;
+}
+
+.hierarchy-plot {
+  padding: 9px;
+
+  border:
+    1px solid #d8e1dc;
+
+  border-radius: 6px;
+
+  background: #f8faf9;
+}
+
+.hierarchy-plot-title {
+  display: flex;
+  flex-direction: column;
+
+  gap: 2px;
+}
+
+.hierarchy-plot-title strong {
+  color: #174c36;
+
+  font-size: 11px;
+}
+
+.hierarchy-plot-title span {
+  color: #77827c;
+
+  font-size: 8px;
+
+  word-break: break-all;
+}
+
+.hierarchy-building {
+  margin-top: 7px;
+  margin-left: 6px;
+
+  padding-left: 8px;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 2px;
+
+  border-left:
+    2px solid #b9cec2;
+}
+
+.hierarchy-building strong {
+  color: #3f5d50;
+
+  font-size: 10px;
+}
+
+.hierarchy-building span {
+  color: #79857e;
+
+  font-size: 8px;
 }
 
 
@@ -528,6 +599,10 @@ select {
   border-radius: 2px;
 }
 
+.legend.green {
+  background: #32a852;
+}
+
 .legend.blue {
   background: #3b78bd;
 }
@@ -586,13 +661,104 @@ select {
 
 
 /* =========================================================
+   SCENE SUMMARY
+   ========================================================= */
+
+.scene-summary {
+  position: absolute;
+
+  top: 14px;
+  left: 50%;
+
+  z-index: 40;
+
+  transform:
+    translateX(-50%);
+
+  display: flex;
+
+  border:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.32
+    );
+
+  border-radius: 8px;
+
+  overflow: hidden;
+
+  background:
+    rgba(
+      10,
+      45,
+      32,
+      0.9
+    );
+
+  color: white;
+
+  box-shadow:
+    0 4px 18px
+    rgba(
+      0,
+      0,
+      0,
+      0.16
+    );
+
+  backdrop-filter:
+    blur(5px);
+}
+
+.summary-item {
+  min-width: 82px;
+
+  padding: 8px 11px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  border-right:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.15
+    );
+}
+
+.summary-item:last-child {
+  border-right: none;
+}
+
+.summary-item strong {
+  font-size: 16px;
+}
+
+.summary-item span {
+  margin-top: 1px;
+
+  font-size: 8px;
+
+  opacity: 0.75;
+
+  text-transform: uppercase;
+}
+
+
+/* =========================================================
    MAP INSTRUCTION
    ========================================================= */
 
 .map-instruction {
   position: absolute;
 
-  top: 18px;
+  top: 80px;
   left: 50%;
 
   z-index: 50;
@@ -642,7 +808,7 @@ select {
 
 
 /* =========================================================
-   PROPERTY PANEL
+   RIGHT PANEL
    ========================================================= */
 
 .property-panel {
@@ -658,7 +824,7 @@ select {
 
 .property-panel h2 {
   margin:
-    0 0 15px 0;
+    6px 0 15px 0;
 
   padding-bottom: 12px;
 
@@ -678,6 +844,37 @@ select {
   color: #64716a;
 
   font-size: 12px;
+
+  line-height: 1.5;
+}
+
+.panel-type-badge {
+  display: inline-block;
+
+  padding: 4px 7px;
+
+  border-radius: 4px;
+
+  background: #dcefe4;
+
+  color: #185237;
+
+  font-size: 8px;
+  font-weight: 800;
+
+  letter-spacing: 0.7px;
+}
+
+.building-badge {
+  background: #f1e2f4;
+
+  color: #762483;
+}
+
+.property-badge {
+  background: #dce9f8;
+
+  color: #245b96;
 }
 
 .info-row {
@@ -707,7 +904,124 @@ select {
 
 
 /* =========================================================
-   MODAL
+   CADASTRAL RELATIONSHIP
+   ========================================================= */
+
+.relationship-box {
+  margin-top: 17px;
+
+  padding: 12px;
+
+  border:
+    1px solid #dce5e0;
+
+  border-radius: 7px;
+
+  background: #f7faf8;
+}
+
+.relationship-title {
+  margin-bottom: 10px;
+
+  color: #214d39;
+
+  font-size: 10px;
+  font-weight: 800;
+
+  text-transform: uppercase;
+}
+
+.relationship-line {
+  padding: 6px 0;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 2px;
+
+  border-bottom:
+    1px solid #e6ebe8;
+}
+
+.relationship-line:last-child {
+  border-bottom: none;
+}
+
+.relationship-line strong {
+  font-size: 11px;
+}
+
+.relationship-line span {
+  color: #6f7a74;
+
+  font-size: 9px;
+}
+
+.floor-row {
+  padding: 6px 0;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 3px;
+
+  border-bottom:
+    1px solid #e5ebe8;
+}
+
+.floor-row:last-child {
+  border-bottom: none;
+}
+
+.floor-row strong {
+  color: #315947;
+
+  font-size: 10px;
+}
+
+.floor-row span {
+  color: #727e77;
+
+  font-size: 9px;
+}
+
+.relationship-path {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  gap: 5px;
+}
+
+.relationship-path span {
+  width: 100%;
+
+  padding: 6px;
+
+  border-radius: 4px;
+
+  background: white;
+
+  border:
+    1px solid #dce4e0;
+
+  color: #294b3b;
+
+  text-align: center;
+
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.relationship-path b {
+  color: #729180;
+
+  font-size: 11px;
+}
+
+
+/* =========================================================
+   MODALS
    ========================================================= */
 
 .modal-backdrop {
@@ -880,6 +1194,12 @@ select {
   cursor: pointer;
 }
 
+.primary-form-button:disabled {
+  opacity: 0.55;
+
+  cursor: not-allowed;
+}
+
 .map-pick-button {
   width: 100%;
 
@@ -963,14 +1283,14 @@ select {
    ========================================================= */
 
 @media (
-  max-width: 900px
+  max-width: 1100px
 ) {
 
   .workspace {
     grid-template-columns:
-      210px
+      225px
       minmax(0, 1fr)
-      240px;
+      270px;
   }
 
   .header-button {
@@ -980,4 +1300,7 @@ select {
     font-size: 10px;
   }
 
+  .summary-item {
+    min-width: 68px;
+  }
 }

@@ -1,28 +1,12 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
 
 
-// ==========================================
-// GET PROPERTY BY UNIT
-// ==========================================
-
-export async function getPropertyByUnit(unit) {
-  const response = await fetch(
-    `${API_BASE_URL}/properties/${encodeURIComponent(unit)}`
-  );
-
-  if (!response.ok) {
-    throw new Error("Property request failed");
-  }
-
-  return await response.json();
-}
-
-
-// ==========================================
+// =========================================================
 // SEARCH PROPERTIES
-// ==========================================
+// =========================================================
 
 export async function searchProperties(query) {
+
   const response = await fetch(
     `${API_BASE_URL}/search?q=${encodeURIComponent(query)}`
   );
@@ -37,11 +21,32 @@ export async function searchProperties(query) {
 }
 
 
-// ==========================================
+// =========================================================
+// GET PROPERTY BY UNIT
+// =========================================================
+
+export async function getPropertyByUnit(unit) {
+
+  const response = await fetch(
+    `${API_BASE_URL}/properties/${encodeURIComponent(unit)}`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "Property request failed"
+    );
+  }
+
+  return await response.json();
+}
+
+
+// =========================================================
 // GET COMPLETE 3D SCENE
-// ==========================================
+// =========================================================
 
 export async function getScene() {
+
   const response = await fetch(
     `${API_BASE_URL}/scene`
   );
@@ -56,11 +61,12 @@ export async function getScene() {
 }
 
 
-// ==========================================
-// POSTGIS TOPOLOGY VALIDATION
-// ==========================================
+// =========================================================
+// 3D TOPOLOGY VALIDATION
+// =========================================================
 
 export async function validateTopology() {
+
   const response = await fetch(
     `${API_BASE_URL}/validate/topology`
   );
@@ -75,21 +81,39 @@ export async function validateTopology() {
 }
 
 
-// ==========================================
-// CREATE PROPERTY
-// ==========================================
+// =========================================================
+// BUILDING ↔ PLOT CADASTRAL VALIDATION
+// =========================================================
 
-export async function createProperty(
-  propertyData
-) {
+export async function validateCadastral() {
+
+  const response = await fetch(
+    `${API_BASE_URL}/validate/cadastral`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "PostGIS cadastral validation failed"
+    );
+  }
+
+  return await response.json();
+}
+
+
+// =========================================================
+// CREATE PROPERTY
+// =========================================================
+
+export async function createProperty(propertyData) {
+
   const response = await fetch(
     `${API_BASE_URL}/properties`,
     {
       method: "POST",
 
       headers: {
-        "Content-Type":
-          "application/json",
+        "Content-Type": "application/json",
       },
 
       body: JSON.stringify(
@@ -98,8 +122,10 @@ export async function createProperty(
     }
   );
 
+
   const data =
     await response.json();
+
 
   if (!response.ok) {
     throw new Error(
@@ -108,36 +134,39 @@ export async function createProperty(
     );
   }
 
+
   return data;
 }
 
 
-// ==========================================
+// =========================================================
 // IMPORT GEOJSON
-// ==========================================
+// =========================================================
 
-export async function importGeoJSON(
-  file
-) {
+export async function importGeoJSON(file) {
+
   const formData =
     new FormData();
+
 
   formData.append(
     "file",
     file
   );
 
+
   const response = await fetch(
     `${API_BASE_URL}/import/geojson`,
     {
       method: "POST",
-
       body: formData,
     }
   );
 
+
   const data =
     await response.json();
+
 
   if (!response.ok) {
     throw new Error(
@@ -146,18 +175,21 @@ export async function importGeoJSON(
     );
   }
 
+
   return data;
 }
 
 
-// ==========================================
-// GET GIS FEATURES
-// ==========================================
+// =========================================================
+// GET IMPORTED GIS FEATURES
+// =========================================================
 
 export async function getGISFeatures() {
+
   const response = await fetch(
     `${API_BASE_URL}/gis/features`
   );
+
 
   if (!response.ok) {
     throw new Error(
@@ -165,25 +197,26 @@ export async function getGISFeatures() {
     );
   }
 
+
   return await response.json();
 }
 
 
-// ==========================================
+// =========================================================
 // GENERATE VERTICAL PARCELS
-// ==========================================
+// =========================================================
 
 export async function generateVerticalParcels(
   generationData
 ) {
+
   const response = await fetch(
     `${API_BASE_URL}/generate/vertical-parcels`,
     {
       method: "POST",
 
       headers: {
-        "Content-Type":
-          "application/json",
+        "Content-Type": "application/json",
       },
 
       body: JSON.stringify(
@@ -192,8 +225,10 @@ export async function generateVerticalParcels(
     }
   );
 
+
   const data =
     await response.json();
+
 
   if (!response.ok) {
     throw new Error(
@@ -201,6 +236,7 @@ export async function generateVerticalParcels(
       "Vertical parcel generation failed"
     );
   }
+
 
   return data;
 }

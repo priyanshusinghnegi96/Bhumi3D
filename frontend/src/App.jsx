@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useState,
 } from "react";
 
@@ -12,15 +13,282 @@ import {
   createProperty,
   importGeoJSON,
   getGISFeatures,
+  getScene,
   generateVerticalParcels,
 } from "./services/api";
 
 
+// =========================================================
+// BUILD PLOT → BUILDING → FLOOR → UNIT HIERARCHY
+// =========================================================
+
+function buildHierarchy(
+  scene,
+  gisData
+) {
+
+  const sceneProperties =
+    scene.properties || [];
+
+  const gisFeatures =
+    gisData.features || [];
+
+
+  const plots =
+    (scene.parcels || [])
+      .map(
+        (parcel) => {
+
+          const buildingMap =
+            new Map();
+
+
+          for (
+            const feature
+            of gisFeatures
+          ) {
+
+            const parentUlpIn =
+              feature.properties
+                ?.parent_ulpin;
+
+
+            const buildingCode =
+              feature.properties
+                ?.building_code;
+
+
+            if (
+              parentUlpIn !==
+              parcel.ulpin
+            ) {
+
+              continue;
+            }
+
+
+            if (
+              !buildingCode
+            ) {
+
+              continue;
+            }
+
+
+            if (
+              !buildingMap.has(
+                buildingCode
+              )
+            ) {
+
+              buildingMap.set(
+                buildingCode,
+                {
+                  code:
+                    buildingCode,
+
+                  name:
+                    feature.name
+                    ||
+                    `Building ${buildingCode}`,
+
+                  featureId:
+                    feature.id,
+                }
+              );
+            }
+          }
+
+
+          const buildings =
+            Array.from(
+              buildingMap.values()
+            )
+              .map(
+                (building) => {
+
+                  const properties =
+                    sceneProperties
+                      .filter(
+                        (property) =>
+                          property.parent_ulpin ===
+                            parcel.ulpin
+                          &&
+                          property.building ===
+                            building.code
+                      );
+
+
+                  const apartments =
+                    properties
+                      .filter(
+                        (property) =>
+                          property.type ===
+                          "Apartment"
+                      );
+
+
+                  const floors =
+                    Array.from(
+                      new Set(
+                        apartments
+                          .map(
+                            (property) =>
+                              property.floor
+                          )
+                          .filter(
+                            Boolean
+                          )
+                      )
+                    )
+                      .sort(
+                        (
+                          first,
+                          second
+                        ) =>
+                          Number(first)
+                          -
+                          Number(second)
+                      );
+
+
+                  const unitsByFloor =
+                    floors.map(
+                      (floor) => ({
+
+                        floor,
+
+                        units:
+                          apartments
+                            .filter(
+                              (property) =>
+                                property.floor ===
+                                floor
+                            )
+                            .map(
+                              (property) =>
+                                property.unit
+                            )
+                            .sort(
+                              (
+                                first,
+                                second
+                              ) =>
+                                Number(first)
+                                -
+                                Number(second)
+                            ),
+                      })
+                    );
+
+
+                  return {
+                    ...building,
+
+                    floorCount:
+                      floors.length,
+
+                    propertyCount:
+                      properties.length,
+
+                    apartmentCount:
+                      apartments.length,
+
+                    floors,
+
+                    unitsByFloor,
+                  };
+                }
+              );
+
+
+          return {
+            ulpin:
+              parcel.ulpin,
+
+            name:
+              parcel.name,
+
+            buildings,
+
+            buildingCount:
+              buildings.length,
+
+            floorCount:
+              buildings.reduce(
+                (
+                  total,
+                  building
+                ) =>
+                  total +
+                  building.floorCount,
+                0
+              ),
+
+            propertyCount:
+              buildings.reduce(
+                (
+                  total,
+                  building
+                ) =>
+                  total +
+                  building.propertyCount,
+                0
+              ),
+          };
+        }
+      );
+
+
+  return {
+    plots,
+
+    totals: {
+      plots:
+        plots.length,
+
+      buildings:
+        plots.reduce(
+          (
+            total,
+            plot
+          ) =>
+            total +
+            plot.buildingCount,
+          0
+        ),
+
+      floors:
+        plots.reduce(
+          (
+            total,
+            plot
+          ) =>
+            total +
+            plot.floorCount,
+          0
+        ),
+
+      properties:
+        plots.reduce(
+          (
+            total,
+            plot
+          ) =>
+            total +
+            plot.propertyCount,
+          0
+        ),
+    },
+  };
+}
+
+
 function App() {
 
-  // ==========================================
-  // SELECTED PROPERTY
-  // ==========================================
+  // =======================================================
+  // SELECTED OBJECT
+  // =======================================================
 
   const [
     selectedProperty,
@@ -28,9 +296,28 @@ function App() {
   ] = useState(null);
 
 
-  // ==========================================
+  // =======================================================
+  // HIERARCHY
+  // =======================================================
+
+  const [
+    hierarchy,
+    setHierarchy,
+  ] = useState({
+    plots: [],
+
+    totals: {
+      plots: 0,
+      buildings: 0,
+      floors: 0,
+      properties: 0,
+    },
+  });
+
+
+  // =======================================================
   // LAYERS
-  // ==========================================
+  // =======================================================
 
   const [
     layers,
@@ -44,9 +331,9 @@ function App() {
   });
 
 
-  // ==========================================
+  // =======================================================
   // SEARCH
-  // ==========================================
+  // =======================================================
 
   const [
     searchText,
@@ -84,9 +371,9 @@ function App() {
   ] = useState(null);
 
 
-  // ==========================================
+  // =======================================================
   // VALIDATION
-  // ==========================================
+  // =======================================================
 
   const [
     validationTrigger,
@@ -104,9 +391,9 @@ function App() {
   ] = useState(null);
 
 
-  // ==========================================
+  // =======================================================
   // SCENE
-  // ==========================================
+  // =======================================================
 
   const [
     sceneVersion,
@@ -114,9 +401,9 @@ function App() {
   ] = useState(0);
 
 
-  // ==========================================
+  // =======================================================
   // ADD PROPERTY
-  // ==========================================
+  // =======================================================
 
   const [
     showAddProperty,
@@ -134,9 +421,9 @@ function App() {
   ] = useState(false);
 
 
-  // ==========================================
-  // GEOJSON IMPORT
-  // ==========================================
+  // =======================================================
+  // GEOJSON
+  // =======================================================
 
   const [
     importMessage,
@@ -149,9 +436,9 @@ function App() {
   ] = useState(false);
 
 
-  // ==========================================
+  // =======================================================
   // FOOTPRINT PICKING
-  // ==========================================
+  // =======================================================
 
   const [
     footprintPicking,
@@ -169,9 +456,9 @@ function App() {
   ] = useState(0);
 
 
-  // ==========================================
+  // =======================================================
   // VERTICAL GENERATOR
-  // ==========================================
+  // =======================================================
 
   const [
     showVerticalGenerator,
@@ -204,9 +491,9 @@ function App() {
   ] = useState(null);
 
 
-  // ==========================================
+  // =======================================================
   // PROPERTY FORM
-  // ==========================================
+  // =======================================================
 
   const [
     form,
@@ -247,9 +534,9 @@ function App() {
   });
 
 
-  // ==========================================
-  // GENERATION FORM
-  // ==========================================
+  // =======================================================
+  // GENERATOR FORM
+  // =======================================================
 
   const [
     generationForm,
@@ -275,13 +562,74 @@ function App() {
   });
 
 
-  // ==========================================
+  // =======================================================
+  // LOAD HIERARCHY
+  // =======================================================
+
+  useEffect(
+    () => {
+
+      async function loadHierarchy() {
+
+        try {
+
+          const [
+            scene,
+            gisData,
+          ] =
+            await Promise.all([
+              getScene(),
+              getGISFeatures(),
+            ]);
+
+
+          setHierarchy(
+            buildHierarchy(
+              scene,
+              gisData
+            )
+          );
+
+
+          setBackendConnected(
+            true
+          );
+        }
+
+        catch (
+          error
+        ) {
+
+          console.error(
+            "Could not load cadastral hierarchy:",
+            error
+          );
+
+
+          setBackendConnected(
+            false
+          );
+        }
+      }
+
+
+      loadHierarchy();
+
+    },
+    [
+      sceneVersion,
+    ]
+  );
+
+
+  // =======================================================
   // LAYER CHANGE
-  // ==========================================
+  // =======================================================
 
   function handleLayerChange(
     layerName
   ) {
+
     setLayers(
       (previous) => ({
         ...previous,
@@ -293,17 +641,20 @@ function App() {
   }
 
 
-  // ==========================================
-  // SEARCH DATABASE
-  // ==========================================
+  // =======================================================
+  // SEARCH
+  // =======================================================
 
   async function handleSearch(
     event
   ) {
+
     event.preventDefault();
+
 
     const query =
       searchText.trim();
+
 
     if (!query) {
       return;
@@ -314,9 +665,11 @@ function App() {
       true
     );
 
+
     setSearchResults(
       []
     );
+
 
     setSearchMessage(
       "Searching..."
@@ -340,10 +693,6 @@ function App() {
         data.results || [];
 
 
-      // --------------------------------------
-      // NOTHING FOUND
-      // --------------------------------------
-
       if (
         results.length === 0
       ) {
@@ -356,10 +705,6 @@ function App() {
       }
 
 
-      // --------------------------------------
-      // ONLY ONE PROPERTY
-      // --------------------------------------
-
       if (
         results.length === 1
       ) {
@@ -371,10 +716,6 @@ function App() {
         return;
       }
 
-
-      // --------------------------------------
-      // MULTIPLE MATCHES
-      // --------------------------------------
 
       setSearchResults(
         results
@@ -394,9 +735,9 @@ function App() {
         false
       );
 
+
       setSearchMessage(
-        error.message
-        ||
+        error.message ||
         "Search failed."
       );
     }
@@ -410,9 +751,9 @@ function App() {
   }
 
 
-  // ==========================================
-  // FOCUS EXACT SEARCH RESULT
-  // ==========================================
+  // =======================================================
+  // FOCUS SEARCH RESULT
+  // =======================================================
 
   function focusSearchResult(
     property
@@ -445,9 +786,6 @@ function App() {
     });
 
 
-    // Use unique Spatial ID for Cesium,
-    // not just "403".
-
     setMapSearchText(
       property.property_id
     );
@@ -470,9 +808,9 @@ function App() {
   }
 
 
-  // ==========================================
+  // =======================================================
   // CESIUM SEARCH RESULT
-  // ==========================================
+  // =======================================================
 
   function handleSearchResult(
     result
@@ -489,9 +827,9 @@ function App() {
   }
 
 
-  // ==========================================
-  // VALIDATION
-  // ==========================================
+  // =======================================================
+  // VALIDATION RESULT
+  // =======================================================
 
   function handleValidationResult(
     result
@@ -503,9 +841,9 @@ function App() {
   }
 
 
-  // ==========================================
+  // =======================================================
   // PROPERTY FORM
-  // ==========================================
+  // =======================================================
 
   function handleFormChange(
     event
@@ -514,7 +852,8 @@ function App() {
     const {
       name,
       value,
-    } = event.target;
+    } =
+      event.target;
 
 
     setForm(
@@ -575,14 +914,10 @@ function App() {
             value,
 
           z_min:
-            String(
-              zMin
-            ),
+            String(zMin),
 
           z_max:
-            String(
-              zMax
-            ),
+            String(zMax),
         })
       );
     }
@@ -601,21 +936,26 @@ function App() {
   }
 
 
-  // ==========================================
+  // =======================================================
   // FOOTPRINT PICKING
-  // ==========================================
+  // =======================================================
 
   function startFootprintPicking() {
 
-    setCreateMessage("");
+    setCreateMessage(
+      ""
+    );
+
 
     setShowAddProperty(
       false
     );
 
+
     setFootprintPicking(
       true
     );
+
 
     setFootprintPickTrigger(
       (value) =>
@@ -673,10 +1013,12 @@ function App() {
       false
     );
 
+
     setFootprintCancelTrigger(
       (value) =>
         value + 1
     );
+
 
     setShowAddProperty(
       true
@@ -684,9 +1026,9 @@ function App() {
   }
 
 
-  // ==========================================
+  // =======================================================
   // CREATE PROPERTY
-  // ==========================================
+  // =======================================================
 
   async function handleCreateProperty(
     event
@@ -802,9 +1144,9 @@ function App() {
   }
 
 
-  // ==========================================
+  // =======================================================
   // GEOJSON IMPORT
-  // ==========================================
+  // =======================================================
 
   async function handleGeoJSONImport(
     event
@@ -868,15 +1210,16 @@ function App() {
         false
       );
 
+
       event.target.value =
         "";
     }
   }
 
 
-  // ==========================================
+  // =======================================================
   // OPEN VERTICAL GENERATOR
-  // ==========================================
+  // =======================================================
 
   async function openVerticalGenerator() {
 
@@ -884,13 +1227,16 @@ function App() {
       true
     );
 
+
     setGenerationMessage(
       ""
     );
 
+
     setGenerationResult(
       null
     );
+
 
     setLoadingGISFeatures(
       true
@@ -954,6 +1300,7 @@ function App() {
         error.message
       );
 
+
       setBackendConnected(
         false
       );
@@ -968,9 +1315,9 @@ function App() {
   }
 
 
-  // ==========================================
-  // GENERATOR FORM
-  // ==========================================
+  // =======================================================
+  // GENERATION FORM
+  // =======================================================
 
   function handleGenerationFormChange(
     event
@@ -979,7 +1326,8 @@ function App() {
     const {
       name,
       value,
-    } = event.target;
+    } =
+      event.target;
 
 
     setGenerationForm(
@@ -991,10 +1339,6 @@ function App() {
       })
     );
 
-
-    // Automatically update parent ULPIN
-    // and building code when a GIS
-    // building is selected.
 
     if (
       name ===
@@ -1045,9 +1389,9 @@ function App() {
   }
 
 
-  // ==========================================
+  // =======================================================
   // GENERATE VERTICAL PARCELS
-  // ==========================================
+  // =======================================================
 
   async function handleGenerateVerticalParcels(
     event
@@ -1142,13 +1486,17 @@ function App() {
   }
 
 
+  // =======================================================
+  // UI
+  // =======================================================
+
   return (
 
     <div className="app">
 
-      {/* ===================================
+      {/* ==================================================
           HEADER
-      =================================== */}
+      ================================================== */}
 
       <header className="topbar">
 
@@ -1204,13 +1552,18 @@ function App() {
           <button
             className="header-button"
 
-            onClick={() => {
-              setCreateMessage("");
+            onClick={
+              () => {
 
-              setShowAddProperty(
-                true
-              );
-            }}
+                setCreateMessage(
+                  ""
+                );
+
+                setShowAddProperty(
+                  true
+                );
+              }
+            }
           >
             + Add Property
           </button>
@@ -1229,11 +1582,10 @@ function App() {
             <span className="status-dot" />
 
             Backend:
+
             {
               backendConnected === false
-
                 ? " Offline"
-
                 : " Connected"
             }
 
@@ -1246,24 +1598,28 @@ function App() {
 
       {
         importMessage && (
+
           <div className="global-message">
             {importMessage}
           </div>
+
         )
       }
 
 
-      {/* ===================================
+      {/* ==================================================
           WORKSPACE
-      =================================== */}
+      ================================================== */}
 
       <main className="workspace">
 
-        {/* =================================
+        {/* =================================================
             LEFT SIDEBAR
-        ================================= */}
+        ================================================= */}
 
         <aside className="left-sidebar">
+
+          {/* SEARCH */}
 
           <section className="sidebar-section">
 
@@ -1300,7 +1656,7 @@ function App() {
                   }
                 }
 
-                placeholder="403, B02 403, Spatial ID..."
+                placeholder="403, B02, Spatial ID..."
               />
 
 
@@ -1311,11 +1667,13 @@ function App() {
                   isSearching
                 }
               >
+
                 {
                   isSearching
                     ? "Searching..."
                     : "Search"
                 }
+
               </button>
 
             </form>
@@ -1323,19 +1681,18 @@ function App() {
 
             {
               searchMessage && (
+
                 <div className="search-message">
                   {searchMessage}
                 </div>
+
               )
             }
 
 
-            {/* ===============================
-                MULTIPLE SEARCH RESULTS
-            =============================== */}
-
             {
               searchResults.length > 0 && (
+
                 <div className="search-results">
 
                   {
@@ -1396,21 +1753,100 @@ function App() {
                   }
 
                 </div>
+
               )
             }
 
           </section>
 
 
-          {/* =================================
+          {/* =================================================
+              HIERARCHY
+          ================================================= */}
+
+          <section className="sidebar-section">
+
+            <h3>
+              Cadastral Hierarchy
+            </h3>
+
+
+            <div className="hierarchy-tree">
+
+              {
+                hierarchy.plots.map(
+                  (plot) => (
+
+                    <div
+                      className="hierarchy-plot"
+
+                      key={
+                        plot.ulpin
+                      }
+                    >
+
+                      <div className="hierarchy-plot-title">
+
+                        <strong>
+                          {plot.name}
+                        </strong>
+
+                        <span>
+                          {plot.ulpin}
+                        </span>
+
+                      </div>
+
+
+                      {
+                        plot.buildings.map(
+                          (building) => (
+
+                            <div
+                              className="hierarchy-building"
+
+                              key={
+                                `${plot.ulpin}-${building.code}`
+                              }
+                            >
+
+                              <strong>
+                                ↳ {building.code}
+                              </strong>
+
+                              <span>
+                                {building.floorCount} floors
+                                {" • "}
+                                {building.propertyCount} properties
+                              </span>
+
+                            </div>
+
+                          )
+                        )
+                      }
+
+                    </div>
+
+                  )
+                )
+              }
+
+            </div>
+
+          </section>
+
+
+          {/* =================================================
               LAYERS
-          ================================= */}
+          ================================================= */}
 
           <section className="sidebar-section">
 
             <h3>
               Layers
             </h3>
+
 
             {
               [
@@ -1439,58 +1875,58 @@ function App() {
                   "Underground Utility",
                 ],
               ]
-              .map(
-                (
-                  [
-                    key,
-                    label,
-                  ]
-                ) => (
+                .map(
+                  (
+                    [
+                      key,
+                      label,
+                    ]
+                  ) => (
 
-                  <label
-                    className="layer-row"
+                    <label
+                      className="layer-row"
 
-                    key={
-                      key
-                    }
-                  >
-
-                    <input
-                      type="checkbox"
-
-                      checked={
-                        layers[key]
+                      key={
+                        key
                       }
+                    >
 
-                      onChange={
-                        () =>
-                          handleLayerChange(
-                            key
-                          )
-                      }
-                    />
+                      <input
+                        type="checkbox"
 
-                    <span>
-                      {label}
-                    </span>
+                        checked={
+                          layers[key]
+                        }
 
-                  </label>
+                        onChange={
+                          () =>
+                            handleLayerChange(
+                              key
+                            )
+                        }
+                      />
 
+                      <span>
+                        {label}
+                      </span>
+
+                    </label>
+
+                  )
                 )
-              )
             }
 
           </section>
 
 
-          {/* =================================
+          {/* =================================================
               VALIDATION
-          ================================= */}
+          ================================================= */}
 
           <section className="sidebar-section">
 
             <h3>
-              Topology Validation
+              Spatial Validation
             </h3>
 
 
@@ -1512,17 +1948,20 @@ function App() {
             <button
               className="reset-button"
 
-              onClick={() => {
+              onClick={
+                () => {
 
-                setResetTrigger(
-                  (value) =>
-                    value + 1
-                );
+                  setResetTrigger(
+                    (value) =>
+                      value + 1
+                  );
 
-                setValidationResult(
-                  null
-                );
-              }}
+
+                  setValidationResult(
+                    null
+                  );
+                }
+              }
             >
               Reset Validation
             </button>
@@ -1539,7 +1978,7 @@ function App() {
                       ? (
 
                         <div className="validation-success">
-                          ✓ No spatial conflicts found
+                          ✓ All spatial rules passed
                         </div>
 
                       )
@@ -1556,7 +1995,7 @@ function App() {
                             }
 
                             {" "}
-                            conflict(s) detected
+                            spatial issue(s) detected
 
                           </div>
 
@@ -1582,24 +2021,39 @@ function App() {
                                       {conflict.type}
                                     </strong>
 
+
                                     <div>
                                       {conflict.objectA}
                                     </div>
+
 
                                     <div>
                                       ↕
                                     </div>
 
+
                                     <div>
                                       {conflict.objectB}
                                     </div>
 
+
                                     <small>
-                                      Overlap:
+
+                                      {
+                                        conflict.metricLabel
+                                        ||
+                                        "Conflict"
+                                      }
+
+                                      :
                                       {" "}
-                                      {conflict.volume}
-                                      {" "}
-                                      m³
+
+                                      {
+                                        conflict.metricValue
+                                        ||
+                                        "—"
+                                      }
+
                                     </small>
 
                                   </div>
@@ -1621,9 +2075,9 @@ function App() {
           </section>
 
 
-          {/* =================================
+          {/* =================================================
               LEGEND
-          ================================= */}
+          ================================================= */}
 
           <section className="sidebar-section">
 
@@ -1631,19 +2085,28 @@ function App() {
               Legend
             </h3>
 
+
+            <div className="legend-item">
+              <span className="legend green" />
+              Land Plot
+            </div>
+
+
             <div className="legend-item">
               <span className="legend blue" />
               Apartment
             </div>
 
+
             <div className="legend-item">
               <span className="legend purple" />
-              Building footprint
+              Building Footprint
             </div>
+
 
             <div className="legend-item">
               <span className="legend red" />
-              Spatial conflict
+              Spatial Violation
             </div>
 
           </section>
@@ -1651,11 +2114,51 @@ function App() {
         </aside>
 
 
-        {/* =================================
-            CESIUM
-        ================================= */}
+        {/* =================================================
+            CESIUM MAP
+        ================================================= */}
 
         <section className="map-area">
+
+          <div className="scene-summary">
+
+            <SummaryItem
+              value={
+                hierarchy.totals.plots
+              }
+
+              label="Plots"
+            />
+
+
+            <SummaryItem
+              value={
+                hierarchy.totals.buildings
+              }
+
+              label="Buildings"
+            />
+
+
+            <SummaryItem
+              value={
+                hierarchy.totals.floors
+              }
+
+              label="Floors"
+            />
+
+
+            <SummaryItem
+              value={
+                hierarchy.totals.properties
+              }
+
+              label="3D Properties"
+            />
+
+          </div>
+
 
           <CesiumViewer
             key={
@@ -1740,101 +2243,26 @@ function App() {
         </section>
 
 
-        {/* =================================
-            PROPERTY PANEL
-        ================================= */}
+        {/* =================================================
+            INFORMATION PANEL
+        ================================================= */}
 
-        <aside className="property-panel">
-
-          <h2>
-            Property Information
-          </h2>
-
-
-          {
-            !selectedProperty
-
-              ? (
-
-                <div className="empty-property">
-                  Click a 3D property or search for a unit.
-                </div>
-
-              )
-
-              : (
-
-                <div className="property-details">
-
-                  <InfoRow
-                    label="Type"
-                    value={
-                      selectedProperty.type
-                    }
-                  />
-
-                  <InfoRow
-                    label="Parent ULPIN"
-                    value={
-                      selectedProperty.parentUlpIn
-                    }
-                  />
-
-                  <InfoRow
-                    label="Spatial ID"
-                    value={
-                      selectedProperty.propertyId
-                    }
-                  />
-
-                  <InfoRow
-                    label="Building"
-                    value={
-                      selectedProperty.building
-                    }
-                  />
-
-                  <InfoRow
-                    label="Floor"
-                    value={
-                      selectedProperty.floor
-                    }
-                  />
-
-                  <InfoRow
-                    label="Unit"
-                    value={
-                      selectedProperty.unit
-                    }
-                  />
-
-                  <InfoRow
-                    label="Vertical Range"
-                    value={
-                      selectedProperty.verticalRange
-                    }
-                  />
-
-                  <InfoRow
-                    label="Validation"
-                    value={
-                      selectedProperty.validation
-                    }
-                  />
-
-                </div>
-
-              )
+        <PropertyInformation
+          selectedProperty={
+            selectedProperty
           }
 
-        </aside>
+          hierarchy={
+            hierarchy
+          }
+        />
 
       </main>
 
 
-      {/* ===================================
+      {/* ==================================================
           ADD PROPERTY MODAL
-      =================================== */}
+      ================================================== */}
 
       {
         showAddProperty && (
@@ -1898,6 +2326,7 @@ function App() {
                       handleFormChange
                     }
                   >
+
                     <option>
                       Apartment
                     </option>
@@ -1909,6 +2338,7 @@ function App() {
                     <option>
                       Underground Utility
                     </option>
+
                   </select>
 
                 </label>
@@ -1930,6 +2360,7 @@ function App() {
 
                     required
                   />
+
                 </label>
 
 
@@ -2174,11 +2605,13 @@ function App() {
                     isCreating
                   }
                 >
+
                   {
                     isCreating
                       ? "Creating..."
                       : "Generate & Add Property"
                   }
+
                 </button>
 
               </form>
@@ -2191,9 +2624,9 @@ function App() {
       }
 
 
-      {/* ===================================
-          VERTICAL GENERATOR
-      =================================== */}
+      {/* ==================================================
+          VERTICAL GENERATOR MODAL
+      ================================================== */}
 
       {
         showVerticalGenerator && (
@@ -2279,9 +2712,11 @@ function App() {
                       loadingGISFeatures
 
                         ? (
+
                           <option value="">
                             Loading...
                           </option>
+
                         )
 
                         : gisFeatures.map(
@@ -2296,9 +2731,9 @@ function App() {
                                   feature.id
                                 }
                               >
+
                                 {
-                                  feature
-                                    .properties
+                                  feature.properties
                                     ?.building_code
                                   ||
                                   feature.name
@@ -2307,8 +2742,7 @@ function App() {
                                 {" — "}
 
                                 {
-                                  feature
-                                    .properties
+                                  feature.properties
                                     ?.parent_ulpin
                                   ||
                                   "No plot"
@@ -2488,11 +2922,13 @@ function App() {
                     isGenerating
                   }
                 >
+
                   {
                     isGenerating
                       ? "Generating..."
                       : "Generate 3D Vertical Parcels"
                   }
+
                 </button>
 
               </form>
@@ -2508,6 +2944,473 @@ function App() {
   );
 }
 
+
+// =========================================================
+// SUMMARY ITEM
+// =========================================================
+
+function SummaryItem({
+  value,
+  label,
+}) {
+
+  return (
+
+    <div className="summary-item">
+
+      <strong>
+        {value}
+      </strong>
+
+      <span>
+        {label}
+      </span>
+
+    </div>
+
+  );
+}
+
+
+// =========================================================
+// INFORMATION PANEL
+// =========================================================
+
+function PropertyInformation({
+  selectedProperty,
+  hierarchy,
+}) {
+
+  if (
+    !selectedProperty
+  ) {
+
+    return (
+
+      <aside className="property-panel">
+
+        <h2>
+          Cadastral Information
+        </h2>
+
+
+        <div className="empty-property">
+
+          Click a land plot,
+          building,
+          apartment,
+          or search for a property.
+
+        </div>
+
+      </aside>
+
+    );
+  }
+
+
+  const plot =
+    hierarchy.plots.find(
+      (item) =>
+        item.ulpin ===
+        selectedProperty.parentUlpIn
+    );
+
+
+  const building =
+    plot?.buildings.find(
+      (item) =>
+        item.code ===
+        selectedProperty.building
+    );
+
+
+  // =======================================================
+  // LAND PLOT
+  // =======================================================
+
+  if (
+    selectedProperty.type ===
+    "Land Parcel"
+  ) {
+
+    return (
+
+      <aside className="property-panel">
+
+        <div className="panel-type-badge">
+          LAND PLOT
+        </div>
+
+
+        <h2>
+          {
+            plot?.name
+            ||
+            "Land Plot"
+          }
+        </h2>
+
+
+        <InfoRow
+          label="ULPIN"
+          value={
+            selectedProperty.parentUlpIn
+          }
+        />
+
+
+        <InfoRow
+          label="Buildings"
+          value={
+            plot?.buildingCount
+            ?? 0
+          }
+        />
+
+
+        <InfoRow
+          label="Total Floors"
+          value={
+            plot?.floorCount
+            ?? 0
+          }
+        />
+
+
+        <InfoRow
+          label="Vertical Properties"
+          value={
+            plot?.propertyCount
+            ?? 0
+          }
+        />
+
+
+        {
+          plot?.buildings.length > 0 && (
+
+            <div className="relationship-box">
+
+              <div className="relationship-title">
+                Plot → Buildings
+              </div>
+
+
+              {
+                plot.buildings.map(
+                  (item) => (
+
+                    <div
+                      className="relationship-line"
+
+                      key={
+                        item.code
+                      }
+                    >
+
+                      <strong>
+                        {item.code}
+                      </strong>
+
+                      <span>
+
+                        {item.floorCount}
+                        {" "}
+                        floors
+
+                        {" • "}
+
+                        {item.propertyCount}
+                        {" "}
+                        properties
+
+                      </span>
+
+                    </div>
+
+                  )
+                )
+              }
+
+            </div>
+
+          )
+        }
+
+      </aside>
+
+    );
+  }
+
+
+  // =======================================================
+  // BUILDING
+  // =======================================================
+
+  if (
+    selectedProperty.type ===
+    "Building Footprint"
+  ) {
+
+    return (
+
+      <aside className="property-panel">
+
+        <div className="panel-type-badge building-badge">
+          BUILDING
+        </div>
+
+
+        <h2>
+          {
+            selectedProperty.building
+          }
+        </h2>
+
+
+        <InfoRow
+          label="Parent Plot"
+          value={
+            plot?.name
+            ||
+            "—"
+          }
+        />
+
+
+        <InfoRow
+          label="Parent ULPIN"
+          value={
+            selectedProperty.parentUlpIn
+          }
+        />
+
+
+        <InfoRow
+          label="Floors"
+          value={
+            building?.floorCount
+            ?? 0
+          }
+        />
+
+
+        <InfoRow
+          label="Vertical Properties"
+          value={
+            building?.propertyCount
+            ?? 0
+          }
+        />
+
+
+        <InfoRow
+          label="Validation"
+          value={
+            selectedProperty.validation
+          }
+        />
+
+
+        {
+          building?.unitsByFloor
+            ?.length > 0 && (
+
+            <div className="relationship-box">
+
+              <div className="relationship-title">
+                Building → Floors → Units
+              </div>
+
+
+              {
+                building.unitsByFloor.map(
+                  (floorData) => (
+
+                    <div
+                      className="floor-row"
+
+                      key={
+                        floorData.floor
+                      }
+                    >
+
+                      <strong>
+                        Floor {floorData.floor}
+                      </strong>
+
+                      <span>
+                        {
+                          floorData.units.join(
+                            ", "
+                          )
+                        }
+                      </span>
+
+                    </div>
+
+                  )
+                )
+              }
+
+            </div>
+
+          )
+        }
+
+      </aside>
+
+    );
+  }
+
+
+  // =======================================================
+  // 3D PROPERTY
+  // =======================================================
+
+  return (
+
+    <aside className="property-panel">
+
+      <div className="panel-type-badge property-badge">
+        3D PROPERTY
+      </div>
+
+
+      <h2>
+        Property Information
+      </h2>
+
+
+      <InfoRow
+        label="Type"
+        value={
+          selectedProperty.type
+        }
+      />
+
+
+      <InfoRow
+        label="Parent Plot"
+        value={
+          plot?.name
+          ||
+          "—"
+        }
+      />
+
+
+      <InfoRow
+        label="Parent ULPIN"
+        value={
+          selectedProperty.parentUlpIn
+        }
+      />
+
+
+      <InfoRow
+        label="Building"
+        value={
+          selectedProperty.building
+        }
+      />
+
+
+      <InfoRow
+        label="Floor"
+        value={
+          selectedProperty.floor
+        }
+      />
+
+
+      <InfoRow
+        label="Unit"
+        value={
+          selectedProperty.unit
+        }
+      />
+
+
+      <InfoRow
+        label="Vertical Range"
+        value={
+          selectedProperty.verticalRange
+        }
+      />
+
+
+      <InfoRow
+        label="Spatial ID"
+        value={
+          selectedProperty.propertyId
+        }
+      />
+
+
+      <InfoRow
+        label="Validation"
+        value={
+          selectedProperty.validation
+        }
+      />
+
+
+      <div className="relationship-box">
+
+        <div className="relationship-title">
+          Cadastral Relationship
+        </div>
+
+
+        <div className="relationship-path">
+
+          <span>
+            {
+              plot?.name
+              ||
+              "Plot"
+            }
+          </span>
+
+          <b>
+            ↓
+          </b>
+
+          <span>
+            {selectedProperty.building}
+          </span>
+
+          <b>
+            ↓
+          </b>
+
+          <span>
+            Floor {selectedProperty.floor}
+          </span>
+
+          <b>
+            ↓
+          </b>
+
+          <span>
+            Unit {selectedProperty.unit}
+          </span>
+
+        </div>
+
+      </div>
+
+    </aside>
+
+  );
+}
+
+
+// =========================================================
+// INFORMATION ROW
+// =========================================================
 
 function InfoRow({
   label,
