@@ -19,6 +19,25 @@ export async function getPropertyByUnit(unit) {
 
 
 // ==========================================
+// SEARCH PROPERTIES
+// ==========================================
+
+export async function searchProperties(query) {
+  const response = await fetch(
+    `${API_BASE_URL}/search?q=${encodeURIComponent(query)}`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "Property search failed"
+    );
+  }
+
+  return await response.json();
+}
+
+
+// ==========================================
 // GET COMPLETE 3D SCENE
 // ==========================================
 
@@ -132,7 +151,7 @@ export async function importGeoJSON(
 
 
 // ==========================================
-// GET IMPORTED GIS FEATURES
+// GET GIS FEATURES
 // ==========================================
 
 export async function getGISFeatures() {
@@ -147,4 +166,41 @@ export async function getGISFeatures() {
   }
 
   return await response.json();
+}
+
+
+// ==========================================
+// GENERATE VERTICAL PARCELS
+// ==========================================
+
+export async function generateVerticalParcels(
+  generationData
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/generate/vertical-parcels`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+
+      body: JSON.stringify(
+        generationData
+      ),
+    }
+  );
+
+  const data =
+    await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.detail ||
+      "Vertical parcel generation failed"
+    );
+  }
+
+  return data;
 }

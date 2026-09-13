@@ -1,22 +1,31 @@
 import os
 import json
+import math
 
 import psycopg
 
 from dotenv import load_dotenv
+
 from fastapi import (
     FastAPI,
     HTTPException,
     UploadFile,
     File,
 )
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
+
+from fastapi.middleware.cors import (
+    CORSMiddleware,
+)
+
+from pydantic import (
+    BaseModel,
+    Field,
+)
 
 
-# ==========================================
-# ENVIRONMENT VARIABLES
-# ==========================================
+# =========================================================
+# ENVIRONMENT
+# =========================================================
 
 load_dotenv()
 
@@ -30,23 +39,23 @@ DB_CONFIG = {
 }
 
 
-# ==========================================
+# =========================================================
 # FASTAPI APPLICATION
-# ==========================================
+# =========================================================
 
 app = FastAPI(
     title="Bhumi3D API",
     description=(
-        "Backend API for Bhumi3D - "
+        "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="0.4.0",
+    version="0.6.0",
 )
 
 
-# ==========================================
+# =========================================================
 # CORS
-# ==========================================
+# =========================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,9 +71,9 @@ app.add_middleware(
 )
 
 
-# ==========================================
-# DATABASE CONNECTION
-# ==========================================
+# =========================================================
+# DATABASE
+# =========================================================
 
 def get_connection():
 
@@ -73,27 +82,65 @@ def get_connection():
     )
 
 
-# ==========================================
-# HOME
-# ==========================================
-# ==========================================
-# PROPERTY CREATE MODEL
-# ==========================================
+# =========================================================
+# PYDANTIC MODELS
+# =========================================================
 
 class PropertyCreate(BaseModel):
+
     property_type: str
+
     parent_ulpin: str
+
     building: str | None = "B01"
+
     floor: str | None = None
+
     unit: str
 
     z_min: float
+
     z_max: float
 
     min_lon: float
+
     min_lat: float
+
     max_lon: float
+
     max_lat: float
+
+
+class VerticalGenerationRequest(BaseModel):
+
+    feature_id: int
+
+    parent_ulpin: str
+
+    building_code: str = "B02"
+
+    floors: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+    )
+
+    units_per_floor: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+    )
+
+    floor_height: float = Field(
+        default=3.2,
+        gt=0,
+        le=20,
+    )
+
+
+# =========================================================
+# HOME
+# =========================================================
 
 @app.get("/")
 def home():
@@ -102,13 +149,13 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "0.4.0",
+        "version": "0.6.0",
     }
 
 
-# ==========================================
+# =========================================================
 # DATABASE HEALTH
-# ==========================================
+# =========================================================
 
 @app.get("/health/database")
 def database_health():
@@ -141,9 +188,9 @@ def database_health():
         )
 
 
-# ==========================================
+# =========================================================
 # GET ALL PROPERTIES
-# ==========================================
+# =========================================================
 
 @app.get("/properties")
 def get_properties():
@@ -174,12 +221,12 @@ def get_properties():
             rows = cursor.fetchall()
 
 
-    properties = []
+    results = []
 
 
     for row in rows:
 
-        properties.append(
+        results.append(
             {
                 "type": row[0],
                 "parent_ulpin": row[1],
@@ -194,12 +241,12 @@ def get_properties():
         )
 
 
-    return properties
+    return results
 
 
-# ==========================================
-# GET ONE PROPERTY
-# ==========================================
+# =========================================================
+# GET PROPERTY BY UNIT
+# =========================================================
 
 @app.get("/properties/{unit}")
 def get_property(unit: str):
@@ -228,7 +275,9 @@ def get_property(unit: str):
 
                 LIMIT 1;
                 """,
-                (unit,),
+                (
+                    unit,
+                ),
             )
 
             row = cursor.fetchone()
@@ -255,9 +304,9 @@ def get_property(unit: str):
     }
 
 
-# ==========================================
+# =========================================================
 # SEARCH PROPERTIES
-# ==========================================
+# =========================================================
 
 @app.get("/search")
 def search_properties(q: str):
@@ -293,9 +342,12 @@ def search_properties(q: str):
 
                     OR property_type ILIKE %s
 
+                    OR building ILIKE %s
+
                 ORDER BY id;
                 """,
                 (
+                    search_value,
                     search_value,
                     search_value,
                     search_value,
@@ -333,9 +385,211 @@ def search_properties(q: str):
     }
 
 
-# ==========================================
+# =========================================================
+# CREATE ONE PROPERTY
+# =========================================================
+
+@app.post("/properties")
+def create_property(
+    property: PropertyCreate
+):
+
+    allowed_types = {
+        "Apartment",
+        "Basement Parking",
+        "Underground Utility",
+    }
+
+
+    if (
+        property.property_type
+        not in allowed_types
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid property type",
+        )
+
+
+    if (
+        property.z_max
+        <= property.z_min
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "z_max must be greater "
+                "than z_min"
+            ),
+        )
+
+
+    if (
+        property.max_lon
+        <= property.min_lon
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "max_lon must be greater "
+                "than min_lon"
+            ),
+        )
+
+
+    if (
+        property.max_lat
+        <= property.min_lat
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "max_lat must be greater "
+                "than min_lat"
+            ),
+        )
+
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                # -------------------------------------
+                # CHECK PARENT ULPIN
+                # -------------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT id
+
+                    FROM parcels
+
+                    WHERE ulpin = %s;
+                    """,
+                    (
+                        property.parent_ulpin,
+                    ),
+                )
+
+
+                if cursor.fetchone() is None:
+
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            "Parent ULPIN "
+                            "does not exist"
+                        ),
+                    )
+
+
+                # -------------------------------------
+                # INSERT
+                # property_id is generated
+                # automatically by PostgreSQL trigger
+                # -------------------------------------
+
+                cursor.execute(
+                    """
+                    INSERT INTO properties (
+                        property_type,
+                        parent_ulpin,
+                        building,
+                        floor,
+                        unit,
+                        z_min,
+                        z_max,
+                        validation,
+                        footprint
+                    )
+
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'Not checked',
+
+                        ST_MakeEnvelope(
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            4326
+                        )
+                    )
+
+                    RETURNING
+                        id,
+                        property_id;
+                    """,
+                    (
+                        property.property_type,
+                        property.parent_ulpin,
+                        property.building,
+                        property.floor,
+                        property.unit,
+                        property.z_min,
+                        property.z_max,
+                        property.min_lon,
+                        property.min_lat,
+                        property.max_lon,
+                        property.max_lat,
+                    ),
+                )
+
+
+                created = cursor.fetchone()
+
+
+        return {
+            "success": True,
+            "message": (
+                "3D property created successfully"
+            ),
+            "id": created[0],
+            "property_id": created[1],
+            "unit": property.unit,
+        }
+
+
+    except HTTPException:
+
+        raise
+
+
+    except psycopg.errors.UniqueViolation:
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A property with this "
+                "generated spatial ID "
+                "already exists"
+            ),
+        )
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+# =========================================================
 # COMPLETE POSTGIS SCENE
-# ==========================================
+# =========================================================
 
 @app.get("/scene")
 def get_scene():
@@ -344,9 +598,9 @@ def get_scene():
 
         with connection.cursor() as cursor:
 
-            # --------------------------------
+            # -------------------------------------
             # PARCELS
-            # --------------------------------
+            # -------------------------------------
 
             cursor.execute(
                 """
@@ -361,6 +615,7 @@ def get_scene():
                 """
             )
 
+
             parcel_rows = cursor.fetchall()
 
 
@@ -373,6 +628,7 @@ def get_scene():
                     {
                         "ulpin": row[0],
                         "name": row[1],
+
                         "geometry": (
                             json.loads(row[2])
                             if row[2]
@@ -382,9 +638,9 @@ def get_scene():
                 )
 
 
-            # --------------------------------
+            # -------------------------------------
             # PROPERTIES
-            # --------------------------------
+            # -------------------------------------
 
             cursor.execute(
                 """
@@ -406,7 +662,10 @@ def get_scene():
                 """
             )
 
-            property_rows = cursor.fetchall()
+
+            property_rows = (
+                cursor.fetchall()
+            )
 
 
             properties = []
@@ -425,6 +684,7 @@ def get_scene():
                         "z_min": row[6],
                         "z_max": row[7],
                         "validation": row[8],
+
                         "geometry": (
                             json.loads(row[9])
                             if row[9]
@@ -442,21 +702,12 @@ def get_scene():
     }
 
 
-# ==========================================
-# POSTGIS 3D TOPOLOGY VALIDATION
-# ==========================================
+# =========================================================
+# POSTGIS TOPOLOGY VALIDATION
+# =========================================================
 
 @app.get("/validate/topology")
 def validate_topology():
-
-    """
-    Detect spatial conflicts using:
-
-    1. 2D footprint intersection in PostGIS
-    2. Vertical Z-range intersection
-    3. Real overlap area in square metres
-    4. 3D overlap volume in cubic metres
-    """
 
     with get_connection() as connection:
 
@@ -542,9 +793,11 @@ def validate_topology():
     for row in rows:
 
         type_a = row[1]
+
         type_b = row[5]
 
         unit_a = row[3]
+
         unit_b = row[7]
 
         overlap_area = float(
@@ -556,14 +809,10 @@ def validate_topology():
         )
 
         overlap_volume = (
-            overlap_area *
-            overlap_height
+            overlap_area
+            * overlap_height
         )
 
-
-        # ----------------------------------
-        # CLASSIFY CONFLICT
-        # ----------------------------------
 
         if (
             type_a == "Apartment"
@@ -616,26 +865,31 @@ def validate_topology():
                     "property_id": row[6],
                 },
 
-                "overlap_area_m2": round(
-                    overlap_area,
-                    2,
-                ),
+                "overlap_area_m2":
+                    round(
+                        overlap_area,
+                        2,
+                    ),
 
-                "overlap_height_m": round(
-                    overlap_height,
-                    2,
-                ),
+                "overlap_height_m":
+                    round(
+                        overlap_height,
+                        2,
+                    ),
 
-                "overlap_volume_m3": round(
-                    overlap_volume,
-                    2,
-                ),
+                "overlap_volume_m3":
+                    round(
+                        overlap_volume,
+                        2,
+                    ),
             }
         )
 
 
     return {
-        "valid": len(conflicts) == 0,
+        "valid": (
+            len(conflicts) == 0
+        ),
 
         "engine": "PostGIS",
 
@@ -644,237 +898,50 @@ def validate_topology():
             "+ vertical Z-range intersection"
         ),
 
-        "conflict_count": len(
-            conflicts
-        ),
+        "conflict_count":
+            len(conflicts),
 
-        "conflicts": conflicts,
-    }
-    # ==========================================
-# CREATE NEW 3D PROPERTY
-# ==========================================
-
-@app.post("/properties")
-def create_property(property: PropertyCreate):
-
-    allowed_types = {
-        "Apartment",
-        "Basement Parking",
-        "Underground Utility",
+        "conflicts":
+            conflicts,
     }
 
 
-    # --------------------------------------
-    # VALIDATE PROPERTY TYPE
-    # --------------------------------------
-
-    if property.property_type not in allowed_types:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid property type",
-        )
-
-
-    # --------------------------------------
-    # VALIDATE HEIGHT
-    # --------------------------------------
-
-    if property.z_max <= property.z_min:
-
-        raise HTTPException(
-            status_code=400,
-            detail="z_max must be greater than z_min",
-        )
-
-
-    # --------------------------------------
-    # VALIDATE FOOTPRINT
-    # --------------------------------------
-
-    if property.max_lon <= property.min_lon:
-
-        raise HTTPException(
-            status_code=400,
-            detail="max_lon must be greater than min_lon",
-        )
-
-
-    if property.max_lat <= property.min_lat:
-
-        raise HTTPException(
-            status_code=400,
-            detail="max_lat must be greater than min_lat",
-        )
-
-
-    try:
-
-        with get_connection() as connection:
-
-            with connection.cursor() as cursor:
-
-                # ----------------------------------
-                # CHECK PARENT ULPIN
-                # ----------------------------------
-
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM parcels
-                    WHERE ulpin = %s;
-                    """,
-                    (
-                        property.parent_ulpin,
-                    ),
-                )
-
-
-                parcel = cursor.fetchone()
-
-
-                if parcel is None:
-
-                    raise HTTPException(
-                        status_code=404,
-                        detail="Parent ULPIN does not exist",
-                    )
-
-
-                # ----------------------------------
-                # INSERT PROPERTY
-                #
-                # property_id IS NOT PROVIDED.
-                #
-                # PostgreSQL trigger automatically
-                # generates it.
-                # ----------------------------------
-
-                cursor.execute(
-                    """
-                    INSERT INTO properties (
-                        property_type,
-                        parent_ulpin,
-                        building,
-                        floor,
-                        unit,
-                        z_min,
-                        z_max,
-                        validation,
-                        footprint
-                    )
-
-                    VALUES (
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        'Not checked',
-
-                        ST_MakeEnvelope(
-                            %s,
-                            %s,
-                            %s,
-                            %s,
-                            4326
-                        )
-                    )
-
-                    RETURNING
-                        id,
-                        property_id;
-                    """,
-                    (
-                        property.property_type,
-                        property.parent_ulpin,
-                        property.building,
-                        property.floor,
-                        property.unit,
-                        property.z_min,
-                        property.z_max,
-
-                        property.min_lon,
-                        property.min_lat,
-                        property.max_lon,
-                        property.max_lat,
-                    ),
-                )
-
-
-                created = cursor.fetchone()
-
-
-        return {
-            "success": True,
-
-            "message": "3D property created successfully",
-
-            "id": created[0],
-
-            "property_id": created[1],
-
-            "unit": property.unit,
-        }
-
-
-    except HTTPException:
-
-        raise
-
-
-    except psycopg.errors.UniqueViolation:
-
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "A property with this generated "
-                "spatial ID already exists"
-            ),
-        )
-
-
-    except Exception as error:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(error),
-        )
-        # ==========================================
-# IMPORT GEOJSON INTO POSTGIS
-# ==========================================
-
-# ==========================================
-# IMPORT GEOJSON INTO POSTGIS
-# ==========================================
+# =========================================================
+# IMPORT GEOJSON
+# =========================================================
 
 @app.post("/import/geojson")
 async def import_geojson(
     file: UploadFile = File(...)
 ):
 
-    filename = file.filename or "uploaded.geojson"
+    filename = (
+        file.filename
+        or
+        "uploaded.geojson"
+    )
 
-    # --------------------------------------
-    # CHECK FILE TYPE
-    # --------------------------------------
 
     if not (
-        filename.lower().endswith(".geojson")
-        or filename.lower().endswith(".json")
+        filename
+        .lower()
+        .endswith(".geojson")
+
+        or
+
+        filename
+        .lower()
+        .endswith(".json")
     ):
 
         raise HTTPException(
             status_code=400,
-            detail="Upload a .geojson or .json file",
+            detail=(
+                "Upload a .geojson "
+                "or .json file"
+            ),
         )
 
-
-    # --------------------------------------
-    # READ FILE
-    # --------------------------------------
 
     try:
 
@@ -884,6 +951,7 @@ async def import_geojson(
             raw_data.decode("utf-8")
         )
 
+
     except Exception:
 
         raise HTTPException(
@@ -892,22 +960,28 @@ async def import_geojson(
         )
 
 
-    # --------------------------------------
-    # GET FEATURES
-    # --------------------------------------
-
-    if geojson.get("type") == "FeatureCollection":
+    if (
+        geojson.get("type")
+        ==
+        "FeatureCollection"
+    ):
 
         features = geojson.get(
             "features",
-            []
+            [],
         )
 
-    elif geojson.get("type") == "Feature":
+
+    elif (
+        geojson.get("type")
+        ==
+        "Feature"
+    ):
 
         features = [
             geojson
         ]
+
 
     else:
 
@@ -920,11 +994,16 @@ async def import_geojson(
         )
 
 
-    if len(features) == 0:
+    if (
+        len(features) == 0
+    ):
 
         raise HTTPException(
             status_code=400,
-            detail="GeoJSON contains no features",
+            detail=(
+                "GeoJSON contains "
+                "no features"
+            ),
         )
 
 
@@ -933,24 +1012,26 @@ async def import_geojson(
     skipped = []
 
 
-    # --------------------------------------
-    # SAVE FEATURES TO POSTGIS
-    # --------------------------------------
-
     try:
 
         with get_connection() as connection:
 
             with connection.cursor() as cursor:
 
-                for index, feature in enumerate(
+                for (
+                    index,
+                    feature
+                ) in enumerate(
                     features,
                     start=1,
                 ):
 
-                    geometry = feature.get(
-                        "geometry"
+                    geometry = (
+                        feature.get(
+                            "geometry"
+                        )
                     )
+
 
                     properties = (
                         feature.get(
@@ -960,39 +1041,45 @@ async def import_geojson(
                     )
 
 
-                    # ----------------------
-                    # CHECK GEOMETRY
-                    # ----------------------
-
                     if not geometry:
 
                         skipped.append(
                             {
-                                "feature": index,
-                                "reason": "Missing geometry",
+                                "feature":
+                                    index,
+
+                                "reason":
+                                    "Missing geometry",
                             }
                         )
 
                         continue
 
 
-                    geometry_type = geometry.get(
-                        "type"
+                    geometry_type = (
+                        geometry.get(
+                            "type"
+                        )
                     )
 
 
-                    if geometry_type not in {
-                        "Polygon",
-                        "MultiPolygon",
-                    }:
+                    if (
+                        geometry_type
+                        not in {
+                            "Polygon",
+                            "MultiPolygon",
+                        }
+                    ):
 
                         skipped.append(
                             {
-                                "feature": index,
+                                "feature":
+                                    index,
 
                                 "reason": (
-                                    "Only Polygon and "
-                                    "MultiPolygon are supported"
+                                    "Only Polygon "
+                                    "and MultiPolygon "
+                                    "are supported"
                                 ),
                             }
                         )
@@ -1000,35 +1087,39 @@ async def import_geojson(
                         continue
 
 
-                    # ----------------------
-                    # NAME
-                    # ----------------------
-
                     name = (
-                        properties.get("name")
-                        or properties.get("Name")
-                        or f"Imported Feature {index}"
+                        properties.get(
+                            "name"
+                        )
+
+                        or
+
+                        properties.get(
+                            "Name"
+                        )
+
+                        or
+
+                        f"Imported Feature {index}"
                     )
 
-
-                    # ----------------------
-                    # FEATURE TYPE
-                    # ----------------------
 
                     feature_type = (
                         properties.get(
                             "feature_type"
                         )
-                        or properties.get(
+
+                        or
+
+                        properties.get(
                             "type"
                         )
-                        or "GIS Feature"
+
+                        or
+
+                        "GIS Feature"
                     )
 
-
-                    # ----------------------
-                    # INSERT INTO POSTGIS
-                    # ----------------------
 
                     cursor.execute(
                         """
@@ -1055,9 +1146,13 @@ async def import_geojson(
                         RETURNING id;
                         """,
                         (
-                            str(feature_type),
+                            str(
+                                feature_type
+                            ),
 
-                            str(name),
+                            str(
+                                name
+                            ),
 
                             filename,
 
@@ -1072,7 +1167,11 @@ async def import_geojson(
                     )
 
 
-                    new_id = cursor.fetchone()[0]
+                    new_id = (
+                        cursor
+                        .fetchone()[0]
+                    )
+
 
                     imported_ids.append(
                         new_id
@@ -1081,24 +1180,22 @@ async def import_geojson(
 
         return {
             "success": True,
-
             "filename": filename,
 
-            "feature_count": len(
-                features
-            ),
+            "feature_count":
+                len(features),
 
-            "imported_count": len(
-                imported_ids
-            ),
+            "imported_count":
+                len(imported_ids),
 
-            "skipped_count": len(
-                skipped
-            ),
+            "skipped_count":
+                len(skipped),
 
-            "imported_ids": imported_ids,
+            "imported_ids":
+                imported_ids,
 
-            "skipped": skipped,
+            "skipped":
+                skipped,
         }
 
 
@@ -1115,9 +1212,9 @@ async def import_geojson(
         )
 
 
-# ==========================================
+# =========================================================
 # GET IMPORTED GIS FEATURES
-# ==========================================
+# =========================================================
 
 @app.get("/gis/features")
 def get_gis_features():
@@ -1134,7 +1231,9 @@ def get_gis_features():
                     name,
                     source_filename,
                     properties,
-                    ST_AsGeoJSON(geometry)
+                    ST_AsGeoJSON(
+                        geometry
+                    )
 
                 FROM imported_features
 
@@ -1155,16 +1254,22 @@ def get_gis_features():
             {
                 "id": row[0],
 
-                "feature_type": row[1],
+                "feature_type":
+                    row[1],
 
-                "name": row[2],
+                "name":
+                    row[2],
 
-                "source_filename": row[3],
+                "source_filename":
+                    row[3],
 
-                "properties": row[4],
+                "properties":
+                    row[4],
 
                 "geometry": (
-                    json.loads(row[5])
+                    json.loads(
+                        row[5]
+                    )
                     if row[5]
                     else None
                 ),
@@ -1173,7 +1278,476 @@ def get_gis_features():
 
 
     return {
-        "count": len(features),
+        "count":
+            len(features),
 
-        "features": features,
+        "features":
+            features,
     }
+
+
+# =========================================================
+# AUTOMATIC VERTICAL PARCEL GENERATION
+# =========================================================
+
+@app.post(
+    "/generate/vertical-parcels"
+)
+def generate_vertical_parcels(
+    request: VerticalGenerationRequest
+):
+
+    """
+    Generate apartments automatically
+    from an imported building footprint.
+
+    Current SIH prototype method:
+
+    Building bounding box
+          ↓
+    Grid subdivision
+          ↓
+    Floors
+          ↓
+    Apartment footprints
+          ↓
+    Automatic spatial IDs
+          ↓
+    PostGIS
+    """
+
+
+    building_code = (
+        request
+        .building_code
+        .strip()
+        .upper()
+    )
+
+
+    if not building_code:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "building_code "
+                "cannot be empty"
+            ),
+        )
+
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                # ---------------------------------
+                # CHECK PARENT PARCEL
+                # ---------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT id
+
+                    FROM parcels
+
+                    WHERE ulpin = %s;
+                    """,
+                    (
+                        request.parent_ulpin,
+                    ),
+                )
+
+
+                if (
+                    cursor.fetchone()
+                    is None
+                ):
+
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            "Parent ULPIN "
+                            "does not exist"
+                        ),
+                    )
+
+
+                # ---------------------------------
+                # GET BUILDING FOOTPRINT BOUNDS
+                # ---------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT
+                        name,
+
+                        ST_XMin(
+                            Box3D(geometry)
+                        ),
+
+                        ST_YMin(
+                            Box3D(geometry)
+                        ),
+
+                        ST_XMax(
+                            Box3D(geometry)
+                        ),
+
+                        ST_YMax(
+                            Box3D(geometry)
+                        )
+
+                    FROM imported_features
+
+                    WHERE id = %s;
+                    """,
+                    (
+                        request.feature_id,
+                    ),
+                )
+
+
+                feature = (
+                    cursor.fetchone()
+                )
+
+
+                if feature is None:
+
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            "Imported GIS feature "
+                            "not found"
+                        ),
+                    )
+
+
+                feature_name = (
+                    feature[0]
+                )
+
+                min_lon = float(
+                    feature[1]
+                )
+
+                min_lat = float(
+                    feature[2]
+                )
+
+                max_lon = float(
+                    feature[3]
+                )
+
+                max_lat = float(
+                    feature[4]
+                )
+
+
+                # ---------------------------------
+                # PREVENT DUPLICATE BUILDING
+                # ---------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+
+                    FROM properties
+
+                    WHERE
+                        parent_ulpin = %s
+
+                        AND building = %s;
+                    """,
+                    (
+                        request.parent_ulpin,
+                        building_code,
+                    ),
+                )
+
+
+                existing_count = (
+                    cursor.fetchone()[0]
+                )
+
+
+                if (
+                    existing_count > 0
+                ):
+
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Building {building_code} "
+                            "already has properties. "
+                            "Use another building code."
+                        ),
+                    )
+
+
+                # ---------------------------------
+                # GRID LAYOUT
+                # ---------------------------------
+
+                columns = math.ceil(
+                    math.sqrt(
+                        request.units_per_floor
+                    )
+                )
+
+
+                rows = math.ceil(
+                    request.units_per_floor
+                    /
+                    columns
+                )
+
+
+                cell_width = (
+                    max_lon
+                    -
+                    min_lon
+                ) / columns
+
+
+                cell_height = (
+                    max_lat
+                    -
+                    min_lat
+                ) / rows
+
+
+                created = []
+
+
+                # =================================
+                # GENERATE FLOORS
+                # =================================
+
+                for floor_number in range(
+                    1,
+                    request.floors + 1,
+                ):
+
+                    floor_code = (
+                        str(
+                            floor_number
+                        )
+                        .zfill(2)
+                    )
+
+
+                    z_min = (
+                        floor_number - 1
+                    ) * request.floor_height
+
+
+                    z_max = (
+                        floor_number
+                        *
+                        request.floor_height
+                    )
+
+
+                    # =============================
+                    # GENERATE UNITS
+                    # =============================
+
+                    for unit_index in range(
+                        1,
+                        request.units_per_floor + 1,
+                    ):
+
+                        grid_index = (
+                            unit_index - 1
+                        )
+
+
+                        row_index = (
+                            grid_index
+                            //
+                            columns
+                        )
+
+
+                        column_index = (
+                            grid_index
+                            %
+                            columns
+                        )
+
+
+                        unit_min_lon = (
+                            min_lon
+                            +
+                            column_index
+                            *
+                            cell_width
+                        )
+
+
+                        unit_max_lon = (
+                            unit_min_lon
+                            +
+                            cell_width
+                        )
+
+
+                        unit_min_lat = (
+                            min_lat
+                            +
+                            row_index
+                            *
+                            cell_height
+                        )
+
+
+                        unit_max_lat = (
+                            unit_min_lat
+                            +
+                            cell_height
+                        )
+
+
+                        # Example:
+                        #
+                        # floor 1, unit 1 → 101
+                        # floor 4, unit 3 → 403
+                        # floor 10, unit 1 → 1001
+
+                        unit_code = (
+                            f"{floor_number}"
+                            f"{unit_index:02d}"
+                        )
+
+
+                        cursor.execute(
+                            """
+                            INSERT INTO properties (
+                                property_type,
+                                parent_ulpin,
+                                building,
+                                floor,
+                                unit,
+                                z_min,
+                                z_max,
+                                validation,
+                                footprint
+                            )
+
+                            VALUES (
+                                'Apartment',
+                                %s,
+                                %s,
+                                %s,
+                                %s,
+                                %s,
+                                %s,
+                                'Not checked',
+
+                                ST_MakeEnvelope(
+                                    %s,
+                                    %s,
+                                    %s,
+                                    %s,
+                                    4326
+                                )
+                            )
+
+                            RETURNING
+                                property_id,
+                                unit;
+                            """,
+                            (
+                                request.parent_ulpin,
+                                building_code,
+                                floor_code,
+                                unit_code,
+                                z_min,
+                                z_max,
+                                unit_min_lon,
+                                unit_min_lat,
+                                unit_max_lon,
+                                unit_max_lat,
+                            ),
+                        )
+
+
+                        inserted = (
+                            cursor.fetchone()
+                        )
+
+
+                        created.append(
+                            {
+                                "property_id":
+                                    inserted[0],
+
+                                "unit":
+                                    inserted[1],
+
+                                "floor":
+                                    floor_code,
+
+                                "z_min":
+                                    z_min,
+
+                                "z_max":
+                                    z_max,
+                            }
+                        )
+
+
+        return {
+            "success": True,
+
+            "source_feature_id":
+                request.feature_id,
+
+            "source_feature_name":
+                feature_name,
+
+            "building":
+                building_code,
+
+            "floors":
+                request.floors,
+
+            "units_per_floor":
+                request.units_per_floor,
+
+            "floor_height":
+                request.floor_height,
+
+            "generated_property_count":
+                len(created),
+
+            "properties":
+                created,
+        }
+
+
+    except HTTPException:
+
+        raise
+
+
+    except psycopg.errors.UniqueViolation:
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "One or more generated "
+                "spatial IDs already exist"
+            ),
+        )
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
