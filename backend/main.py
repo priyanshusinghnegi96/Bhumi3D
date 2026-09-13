@@ -49,7 +49,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="0.6.0",
+    version="0.7.1",
 )
 
 
@@ -149,7 +149,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "0.6.0",
+        "version": "0.7.1",
     }
 
 
@@ -1751,12 +1751,21 @@ def generate_vertical_parcels(
             status_code=500,
             detail=str(error),
         )
-        # =========================================================
+
+# =========================================================
 # BUILDING ↔ PARENT PLOT CADASTRAL VALIDATION
 # =========================================================
 
 @app.get("/validate/cadastral")
 def validate_cadastral_boundaries():
+
+    """
+    Validate that each imported building footprint is fully
+    contained inside the land parcel declared by parent_ulpin.
+
+    This endpoint reads the PostGIS view:
+        building_plot_validation
+    """
 
     try:
 
@@ -1794,12 +1803,23 @@ def validate_cadastral_boundaries():
         for row in rows:
 
             building = {
-                "feature_id": row[0],
-                "building_name": row[1],
-                "building_code": row[2],
-                "parent_ulpin": row[3],
-                "plot_name": row[4],
-                "is_inside_parent_plot": row[5],
+                "feature_id":
+                    row[0],
+
+                "building_name":
+                    row[1],
+
+                "building_code":
+                    row[2],
+
+                "parent_ulpin":
+                    row[3],
+
+                "plot_name":
+                    row[4],
+
+                "is_inside_parent_plot":
+                    row[5],
 
                 "outside_area_m2": (
                     float(row[6])
@@ -1813,7 +1833,8 @@ def validate_cadastral_boundaries():
                     else None
                 ),
 
-                "status": row[8],
+                "status":
+                    row[8],
             }
 
 
@@ -1833,11 +1854,11 @@ def validate_cadastral_boundaries():
 
 
         return {
-            "valid": (
-                len(violations) == 0
-            ),
+            "valid":
+                len(violations) == 0,
 
-            "engine": "PostGIS",
+            "engine":
+                "PostGIS",
 
             "rule": (
                 "Building footprint must be "
@@ -1865,6 +1886,1157 @@ def validate_cadastral_boundaries():
             status_code=500,
             detail=(
                 "Cadastral validation error: "
+                f"{error}"
+            ),
+        )
+
+
+# =========================================================
+# BATCH VERTICAL PARCEL GENERATION MODEL
+# =========================================================
+
+class BatchGenerationRequest(BaseModel):
+
+    default_floors: int = Field(
+        default=4,
+        ge=1,
+        le=100,
+    )
+
+    default_units_per_floor: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+    )
+
+    default_floor_height: float = Field(
+        default=3.2,
+        gt=0,
+        le=20,
+    )
+
+    skip_existing: bool = True
+
+    require_inside_parent_plot: bool = True
+
+
+# =========================================================
+# BATCH GENERATION HELPERS
+# =========================================================
+
+def safe_positive_int(
+    value,
+    fallback,
+    minimum=1,
+    maximum=100,
+):
+
+    try:
+
+        result = int(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return fallback
+
+
+    if (
+        result < minimum
+        or
+        result > maximum
+    ):
+
+        return fallback
+
+
+    return result
+
+
+def safe_positive_float(
+    value,
+    fallback,
+    minimum=0.000001,
+    maximum=1000000,
+):
+
+    try:
+
+        result = float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return fallback
+
+
+    if (
+        result < minimum
+        or
+        result > maximum
+    ):
+
+        return fallback
+
+
+    return result
+
+
+# =========================================================
+# AUTOMATIC MULTI-BUILDING GENERATION
+# =========================================================
+
+@app.post("/generate/batch-buildings")
+def generate_batch_buildings(
+    request: BatchGenerationRequest
+):
+
+    """
+    Process all imported polygon building footprints.
+
+    Pipeline:
+
+        Imported GIS footprints
+                ↓
+        Resolve / verify parent parcel
+                ↓
+        Read building metadata
+                ↓
+        Create regular unit grid
+                ↓
+        Clip grid cells to real building footprint
+                ↓
+        Generate floors + apartment volumes
+                ↓
+        PostgreSQL trigger creates linked spatial IDs
+                ↓
+        Store everything in PostGIS
+
+    Important:
+    This is an SIH prototype subdivision method.
+    Real floor-plan, LiDAR or AI-derived boundaries can later
+    replace the regular grid subdivision.
+    """
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                # -------------------------------------------------
+                # LOAD ALL IMPORTED POLYGON FEATURES
+                # -------------------------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        feature_type,
+                        properties,
+
+                        ST_XMin(
+                            Box3D(geometry)
+                        ) AS min_lon,
+
+                        ST_YMin(
+                            Box3D(geometry)
+                        ) AS min_lat,
+
+                        ST_XMax(
+                            Box3D(geometry)
+                        ) AS max_lon,
+
+                        ST_YMax(
+                            Box3D(geometry)
+                        ) AS max_lat
+
+                    FROM imported_features
+
+                    WHERE
+                        geometry IS NOT NULL
+
+                        AND GeometryType(
+                            geometry
+                        ) IN (
+                            'POLYGON',
+                            'MULTIPOLYGON'
+                        )
+
+                    ORDER BY id;
+                    """
+                )
+
+                features = cursor.fetchall()
+
+
+                if (
+                    len(features) == 0
+                ):
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "No imported polygon GIS "
+                            "features are available"
+                        ),
+                    )
+
+
+                generated_buildings = []
+
+                skipped_buildings = []
+
+                generated_property_count = 0
+
+
+                # =================================================
+                # PROCESS EVERY IMPORTED FEATURE
+                # =================================================
+
+                for feature in features:
+
+                    feature_id = (
+                        feature[0]
+                    )
+
+                    feature_name = (
+                        feature[1]
+                        or
+                        f"Feature {feature_id}"
+                    )
+
+                    feature_type = (
+                        feature[2]
+                        or
+                        "GIS Feature"
+                    )
+
+                    properties = (
+                        feature[3]
+                        or
+                        {}
+                    )
+
+                    min_lon = float(
+                        feature[4]
+                    )
+
+                    min_lat = float(
+                        feature[5]
+                    )
+
+                    max_lon = float(
+                        feature[6]
+                    )
+
+                    max_lat = float(
+                        feature[7]
+                    )
+
+
+                    # ---------------------------------------------
+                    # BUILDING CODE
+                    # ---------------------------------------------
+
+                    building_code = str(
+                        properties.get(
+                            "building_code"
+                        )
+                        or
+                        f"B{feature_id:02d}"
+                    ).strip().upper()
+
+
+                    if (
+                        not building_code
+                    ):
+
+                        building_code = (
+                            f"B{feature_id:02d}"
+                        )
+
+
+                    # ---------------------------------------------
+                    # RESOLVE PARENT PLOT
+                    #
+                    # 1. Prefer parent_ulpin metadata
+                    # 2. Otherwise find the parcel that completely
+                    #    covers the building footprint
+                    # ---------------------------------------------
+
+                    declared_parent = (
+                        properties.get(
+                            "parent_ulpin"
+                        )
+                    )
+
+
+                    parent_ulpin = None
+
+                    plot_name = None
+
+                    inside_parent = False
+
+
+                    if (
+                        declared_parent
+                    ):
+
+                        declared_parent = str(
+                            declared_parent
+                        ).strip()
+
+
+                        cursor.execute(
+                            """
+                            SELECT
+                                parcel.ulpin,
+                                parcel.name,
+
+                                ST_CoveredBy(
+                                    feature.geometry,
+                                    parcel.geometry
+                                )
+
+                            FROM imported_features
+                                AS feature
+
+                            JOIN parcels
+                                AS parcel
+                                ON parcel.ulpin = %s::text
+
+                            WHERE
+                                feature.id = %s::integer;
+                            """,
+                            (
+                                declared_parent,
+                                feature_id,
+                            ),
+                        )
+
+
+                        parent_match = (
+                            cursor.fetchone()
+                        )
+
+
+                        if (
+                            parent_match
+                            is None
+                        ):
+
+                            skipped_buildings.append(
+                                {
+                                    "feature_id":
+                                        feature_id,
+
+                                    "feature_name":
+                                        feature_name,
+
+                                    "building":
+                                        building_code,
+
+                                    "reason": (
+                                        "Declared parent ULPIN "
+                                        f"{declared_parent} "
+                                        "does not exist"
+                                    ),
+                                }
+                            )
+
+                            continue
+
+
+                        parent_ulpin = (
+                            parent_match[0]
+                        )
+
+                        plot_name = (
+                            parent_match[1]
+                        )
+
+                        inside_parent = bool(
+                            parent_match[2]
+                        )
+
+
+                    else:
+
+                        # -----------------------------------------
+                        # AUTOMATIC SPATIAL PARENT ASSIGNMENT
+                        # -----------------------------------------
+
+                        cursor.execute(
+                            """
+                            SELECT
+                                parcel.ulpin,
+                                parcel.name
+
+                            FROM parcels
+                                AS parcel
+
+                            JOIN imported_features
+                                AS feature
+                                ON feature.id = %s::integer
+
+                            WHERE
+                                ST_CoveredBy(
+                                    feature.geometry,
+                                    parcel.geometry
+                                )
+
+                            ORDER BY
+                                ST_Area(
+                                    parcel.geometry::geography
+                                ) ASC
+
+                            LIMIT 1;
+                            """,
+                            (
+                                feature_id,
+                            ),
+                        )
+
+
+                        parent_match = (
+                            cursor.fetchone()
+                        )
+
+
+                        if (
+                            parent_match
+                            is None
+                        ):
+
+                            skipped_buildings.append(
+                                {
+                                    "feature_id":
+                                        feature_id,
+
+                                    "feature_name":
+                                        feature_name,
+
+                                    "building":
+                                        building_code,
+
+                                    "reason": (
+                                        "No containing parent "
+                                        "land parcel was found"
+                                    ),
+                                }
+                            )
+
+                            continue
+
+
+                        parent_ulpin = (
+                            parent_match[0]
+                        )
+
+                        plot_name = (
+                            parent_match[1]
+                        )
+
+                        inside_parent = True
+
+
+                    # ---------------------------------------------
+                    # OPTIONAL CADASTRAL SAFETY RULE
+                    # ---------------------------------------------
+
+                    if (
+                        request
+                        .require_inside_parent_plot
+                        and
+                        not inside_parent
+                    ):
+
+                        cursor.execute(
+                            """
+                            SELECT
+                                ST_Area(
+                                    ST_Difference(
+                                        feature.geometry,
+                                        parcel.geometry
+                                    )::geography
+                                )
+
+                            FROM imported_features
+                                AS feature
+
+                            JOIN parcels
+                                AS parcel
+                                ON parcel.ulpin = %s::text
+
+                            WHERE
+                                feature.id = %s::integer;
+                            """,
+                            (
+                                parent_ulpin,
+                                feature_id,
+                            ),
+                        )
+
+
+                        outside_row = (
+                            cursor.fetchone()
+                        )
+
+
+                        outside_area = (
+                            float(
+                                outside_row[0]
+                            )
+                            if (
+                                outside_row
+                                and
+                                outside_row[0]
+                                is not None
+                            )
+                            else None
+                        )
+
+
+                        skipped_buildings.append(
+                            {
+                                "feature_id":
+                                    feature_id,
+
+                                "feature_name":
+                                    feature_name,
+
+                                "building":
+                                    building_code,
+
+                                "parent_ulpin":
+                                    parent_ulpin,
+
+                                "plot_name":
+                                    plot_name,
+
+                                "outside_area_m2": (
+                                    round(
+                                        outside_area,
+                                        2,
+                                    )
+                                    if outside_area
+                                    is not None
+                                    else None
+                                ),
+
+                                "reason": (
+                                    "Building footprint "
+                                    "extends outside its "
+                                    "parent plot"
+                                ),
+                            }
+                        )
+
+                        continue
+
+
+                    # ---------------------------------------------
+                    # READ GENERATION METADATA
+                    # ---------------------------------------------
+
+                    floors = safe_positive_int(
+                        properties.get(
+                            "floors"
+                        ),
+                        request.default_floors,
+                        minimum=1,
+                        maximum=100,
+                    )
+
+
+                    units_per_floor = (
+                        safe_positive_int(
+                            properties.get(
+                                "units_per_floor"
+                            ),
+                            request
+                            .default_units_per_floor,
+                            minimum=1,
+                            maximum=20,
+                        )
+                    )
+
+
+                    floor_height = (
+                        request
+                        .default_floor_height
+                    )
+
+
+                    metadata_floor_height = (
+                        properties.get(
+                            "floor_height"
+                        )
+                    )
+
+
+                    if (
+                        metadata_floor_height
+                        is not None
+                    ):
+
+                        floor_height = (
+                            safe_positive_float(
+                                metadata_floor_height,
+                                request
+                                .default_floor_height,
+                                minimum=0.1,
+                                maximum=20,
+                            )
+                        )
+
+
+                    elif (
+                        properties.get(
+                            "height_m"
+                        )
+                        is not None
+                    ):
+
+                        total_height = (
+                            safe_positive_float(
+                                properties.get(
+                                    "height_m"
+                                ),
+                                floors
+                                *
+                                request
+                                .default_floor_height,
+                                minimum=0.1,
+                                maximum=2000,
+                            )
+                        )
+
+                        floor_height = (
+                            total_height
+                            /
+                            floors
+                        )
+
+
+                    # ---------------------------------------------
+                    # PREVENT DUPLICATE BUILDINGS
+                    # ---------------------------------------------
+
+                    cursor.execute(
+                        """
+                        SELECT
+                            COUNT(*)
+
+                        FROM properties
+
+                        WHERE
+                            parent_ulpin = %s::text
+
+                            AND building = %s::text;
+                        """,
+                        (
+                            parent_ulpin,
+                            building_code,
+                        ),
+                    )
+
+
+                    existing_count = (
+                        cursor.fetchone()[0]
+                    )
+
+
+                    if (
+                        existing_count > 0
+                    ):
+
+                        if (
+                            request.skip_existing
+                        ):
+
+                            skipped_buildings.append(
+                                {
+                                    "feature_id":
+                                        feature_id,
+
+                                    "feature_name":
+                                        feature_name,
+
+                                    "building":
+                                        building_code,
+
+                                    "parent_ulpin":
+                                        parent_ulpin,
+
+                                    "plot_name":
+                                        plot_name,
+
+                                    "existing_property_count":
+                                        existing_count,
+
+                                    "reason": (
+                                        "Building already "
+                                        "has generated properties"
+                                    ),
+                                }
+                            )
+
+                            continue
+
+
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Building {building_code} "
+                                f"on {parent_ulpin} already "
+                                "has generated properties"
+                            ),
+                        )
+
+
+                    # ---------------------------------------------
+                    # SAVE / NORMALIZE BUILDING METADATA
+                    # ---------------------------------------------
+
+                    cursor.execute(
+                        """
+                        UPDATE imported_features
+
+                        SET properties =
+                            COALESCE(
+                                properties,
+                                '{}'::jsonb
+                            )
+                            ||
+                            %s::jsonb
+
+                        WHERE id = %s::integer;
+                        """,
+                        (
+                            json.dumps(
+                                {
+                                    "building_code": building_code,
+                                    "parent_ulpin": parent_ulpin,
+                                    "floors": floors,
+                                    "units_per_floor": units_per_floor,
+                                    "floor_height": floor_height,
+                                    "height_m": floors * floor_height,
+                                }
+                            ),
+                            feature_id,
+                        ),
+                    )
+
+
+                    # ---------------------------------------------
+                    # GRID LAYOUT
+                    # ---------------------------------------------
+
+                    columns = math.ceil(
+                        math.sqrt(
+                            units_per_floor
+                        )
+                    )
+
+
+                    rows = math.ceil(
+                        units_per_floor
+                        /
+                        columns
+                    )
+
+
+                    cell_width = (
+                        max_lon
+                        -
+                        min_lon
+                    ) / columns
+
+
+                    cell_height = (
+                        max_lat
+                        -
+                        min_lat
+                    ) / rows
+
+
+                    building_created = []
+
+
+                    # =============================================
+                    # GENERATE FLOORS + UNITS
+                    # =============================================
+
+                    for floor_number in range(
+                        1,
+                        floors + 1,
+                    ):
+
+                        floor_code = (
+                            str(
+                                floor_number
+                            )
+                            .zfill(2)
+                        )
+
+
+                        z_min = (
+                            floor_number - 1
+                        ) * floor_height
+
+
+                        z_max = (
+                            floor_number
+                            *
+                            floor_height
+                        )
+
+
+                        for unit_index in range(
+                            1,
+                            units_per_floor + 1,
+                        ):
+
+                            grid_index = (
+                                unit_index - 1
+                            )
+
+
+                            row_index = (
+                                grid_index
+                                //
+                                columns
+                            )
+
+
+                            column_index = (
+                                grid_index
+                                %
+                                columns
+                            )
+
+
+                            unit_min_lon = (
+                                min_lon
+                                +
+                                column_index
+                                *
+                                cell_width
+                            )
+
+
+                            unit_max_lon = (
+                                unit_min_lon
+                                +
+                                cell_width
+                            )
+
+
+                            unit_min_lat = (
+                                min_lat
+                                +
+                                row_index
+                                *
+                                cell_height
+                            )
+
+
+                            unit_max_lat = (
+                                unit_min_lat
+                                +
+                                cell_height
+                            )
+
+
+                            unit_code = (
+                                f"{floor_number}"
+                                f"{unit_index:02d}"
+                            )
+
+
+                            # -------------------------------------
+                            # CLIP EACH GRID CELL TO THE TRUE
+                            # BUILDING FOOTPRINT.
+                            #
+                            # ST_Dump converts possible MultiPolygon
+                            # results into Polygon parts. The largest
+                            # polygon is used for this prototype.
+                            # -------------------------------------
+
+                            cursor.execute(
+                                """
+                                WITH source_geometry AS (
+
+                                    SELECT
+                                        ST_MakeValid(
+                                            geometry
+                                        ) AS geometry
+
+                                    FROM imported_features
+
+                                    WHERE id = %s::integer
+                                ),
+
+                                clipped_parts AS (
+
+                                    SELECT
+                                        (
+                                            ST_Dump(
+                                                ST_CollectionExtract(
+                                                    ST_Intersection(
+                                                        source_geometry.geometry,
+
+                                                        ST_MakeEnvelope(
+                                                            %s::double precision,
+                                                            %s::double precision,
+                                                            %s::double precision,
+                                                            %s::double precision,
+                                                            4326
+                                                        )
+                                                    ),
+                                                    3
+                                                )
+                                            )
+                                        ).geom
+                                            AS geometry
+
+                                    FROM source_geometry
+                                ),
+
+                                chosen_polygon AS (
+
+                                    SELECT
+                                        geometry
+
+                                    FROM clipped_parts
+
+                                    WHERE
+                                        geometry IS NOT NULL
+
+                                        AND NOT ST_IsEmpty(
+                                            geometry
+                                        )
+
+                                    ORDER BY
+                                        ST_Area(
+                                            geometry::geography
+                                        ) DESC
+
+                                    LIMIT 1
+                                )
+
+                                INSERT INTO properties (
+                                    property_type,
+                                    parent_ulpin,
+                                    building,
+                                    floor,
+                                    unit,
+                                    z_min,
+                                    z_max,
+                                    validation,
+                                    footprint
+                                )
+
+                                SELECT
+                                    'Apartment',
+                                    %s::text,
+                                    %s::text,
+                                    %s::text,
+                                    %s::text,
+                                    %s::double precision,
+                                    %s::double precision,
+                                    'Not checked',
+                                    geometry
+
+                                FROM chosen_polygon
+
+                                RETURNING
+                                    property_id,
+                                    unit;
+                                """,
+                                (
+                                    feature_id,
+
+                                    unit_min_lon,
+                                    unit_min_lat,
+                                    unit_max_lon,
+                                    unit_max_lat,
+
+                                    parent_ulpin,
+                                    building_code,
+                                    floor_code,
+                                    unit_code,
+                                    z_min,
+                                    z_max,
+                                ),
+                            )
+
+
+                            inserted = (
+                                cursor.fetchone()
+                            )
+
+
+                            # A cell may fall entirely outside
+                            # an irregular building polygon.
+
+                            if (
+                                inserted
+                                is None
+                            ):
+
+                                continue
+
+
+                            generated_property_count += 1
+
+
+                            building_created.append(
+                                {
+                                    "property_id":
+                                        inserted[0],
+
+                                    "unit":
+                                        inserted[1],
+
+                                    "floor":
+                                        floor_code,
+
+                                    "z_min":
+                                        round(
+                                            z_min,
+                                            3,
+                                        ),
+
+                                    "z_max":
+                                        round(
+                                            z_max,
+                                            3,
+                                        ),
+                                }
+                            )
+
+
+                    generated_buildings.append(
+                        {
+                            "feature_id":
+                                feature_id,
+
+                            "feature_name":
+                                feature_name,
+
+                            "feature_type":
+                                feature_type,
+
+                            "building":
+                                building_code,
+
+                            "parent_ulpin":
+                                parent_ulpin,
+
+                            "plot_name":
+                                plot_name,
+
+                            "parent_assignment": (
+                                "metadata"
+                                if declared_parent
+                                else
+                                "automatic spatial match"
+                            ),
+
+                            "floors":
+                                floors,
+
+                            "units_per_floor":
+                                units_per_floor,
+
+                            "floor_height":
+                                round(
+                                    floor_height,
+                                    3,
+                                ),
+
+                            "generated_property_count":
+                                len(
+                                    building_created
+                                ),
+
+                            "properties":
+                                building_created,
+                        }
+                    )
+
+
+        return {
+            "success":
+                True,
+
+            "engine":
+                "PostgreSQL + PostGIS",
+
+            "method": (
+                "Batch building processing with "
+                "spatial parent assignment, "
+                "grid subdivision and footprint clipping"
+            ),
+
+            "source_feature_count":
+                len(features),
+
+            "generated_building_count":
+                len(
+                    generated_buildings
+                ),
+
+            "generated_property_count":
+                generated_property_count,
+
+            "skipped_building_count":
+                len(
+                    skipped_buildings
+                ),
+
+            "buildings":
+                generated_buildings,
+
+            "skipped":
+                skipped_buildings,
+        }
+
+
+    except HTTPException:
+
+        raise
+
+
+    except psycopg.errors.UniqueViolation:
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "One or more generated "
+                "spatial IDs already exist"
+            ),
+        )
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Batch generation error: "
                 f"{error}"
             ),
         )
