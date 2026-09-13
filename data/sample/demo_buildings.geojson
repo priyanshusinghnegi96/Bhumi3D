@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Demo Building A",
+        "feature_type": "Building Footprint"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.20870, 28.61370],
+            [77.20890, 28.61370],
+            [77.20890, 28.61385],
+            [77.20870, 28.61385],
+            [77.20870, 28.61370]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Demo Building B",
+        "feature_type": "Building Footprint"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.20915, 28.61370],
+            [77.20935, 28.61370],
+            [77.20935, 28.61385],
+            [77.20915, 28.61385],
+            [77.20915, 28.61370]
+          ]
+        ]
+      }
+    }
+  ]
+}

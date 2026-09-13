@@ -4,7 +4,12 @@ import json
 import psycopg
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    UploadFile,
+    File,
+)
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -837,3 +842,338 @@ def create_property(property: PropertyCreate):
             status_code=500,
             detail=str(error),
         )
+        # ==========================================
+# IMPORT GEOJSON INTO POSTGIS
+# ==========================================
+
+# ==========================================
+# IMPORT GEOJSON INTO POSTGIS
+# ==========================================
+
+@app.post("/import/geojson")
+async def import_geojson(
+    file: UploadFile = File(...)
+):
+
+    filename = file.filename or "uploaded.geojson"
+
+    # --------------------------------------
+    # CHECK FILE TYPE
+    # --------------------------------------
+
+    if not (
+        filename.lower().endswith(".geojson")
+        or filename.lower().endswith(".json")
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Upload a .geojson or .json file",
+        )
+
+
+    # --------------------------------------
+    # READ FILE
+    # --------------------------------------
+
+    try:
+
+        raw_data = await file.read()
+
+        geojson = json.loads(
+            raw_data.decode("utf-8")
+        )
+
+    except Exception:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid GeoJSON file",
+        )
+
+
+    # --------------------------------------
+    # GET FEATURES
+    # --------------------------------------
+
+    if geojson.get("type") == "FeatureCollection":
+
+        features = geojson.get(
+            "features",
+            []
+        )
+
+    elif geojson.get("type") == "Feature":
+
+        features = [
+            geojson
+        ]
+
+    else:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "GeoJSON must be a "
+                "FeatureCollection or Feature"
+            ),
+        )
+
+
+    if len(features) == 0:
+
+        raise HTTPException(
+            status_code=400,
+            detail="GeoJSON contains no features",
+        )
+
+
+    imported_ids = []
+
+    skipped = []
+
+
+    # --------------------------------------
+    # SAVE FEATURES TO POSTGIS
+    # --------------------------------------
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                for index, feature in enumerate(
+                    features,
+                    start=1,
+                ):
+
+                    geometry = feature.get(
+                        "geometry"
+                    )
+
+                    properties = (
+                        feature.get(
+                            "properties"
+                        )
+                        or {}
+                    )
+
+
+                    # ----------------------
+                    # CHECK GEOMETRY
+                    # ----------------------
+
+                    if not geometry:
+
+                        skipped.append(
+                            {
+                                "feature": index,
+                                "reason": "Missing geometry",
+                            }
+                        )
+
+                        continue
+
+
+                    geometry_type = geometry.get(
+                        "type"
+                    )
+
+
+                    if geometry_type not in {
+                        "Polygon",
+                        "MultiPolygon",
+                    }:
+
+                        skipped.append(
+                            {
+                                "feature": index,
+
+                                "reason": (
+                                    "Only Polygon and "
+                                    "MultiPolygon are supported"
+                                ),
+                            }
+                        )
+
+                        continue
+
+
+                    # ----------------------
+                    # NAME
+                    # ----------------------
+
+                    name = (
+                        properties.get("name")
+                        or properties.get("Name")
+                        or f"Imported Feature {index}"
+                    )
+
+
+                    # ----------------------
+                    # FEATURE TYPE
+                    # ----------------------
+
+                    feature_type = (
+                        properties.get(
+                            "feature_type"
+                        )
+                        or properties.get(
+                            "type"
+                        )
+                        or "GIS Feature"
+                    )
+
+
+                    # ----------------------
+                    # INSERT INTO POSTGIS
+                    # ----------------------
+
+                    cursor.execute(
+                        """
+                        INSERT INTO imported_features (
+                            feature_type,
+                            name,
+                            source_filename,
+                            properties,
+                            geometry
+                        )
+
+                        VALUES (
+                            %s,
+                            %s,
+                            %s,
+                            %s::jsonb,
+
+                            ST_SetSRID(
+                                ST_GeomFromGeoJSON(%s),
+                                4326
+                            )
+                        )
+
+                        RETURNING id;
+                        """,
+                        (
+                            str(feature_type),
+
+                            str(name),
+
+                            filename,
+
+                            json.dumps(
+                                properties
+                            ),
+
+                            json.dumps(
+                                geometry
+                            ),
+                        ),
+                    )
+
+
+                    new_id = cursor.fetchone()[0]
+
+                    imported_ids.append(
+                        new_id
+                    )
+
+
+        return {
+            "success": True,
+
+            "filename": filename,
+
+            "feature_count": len(
+                features
+            ),
+
+            "imported_count": len(
+                imported_ids
+            ),
+
+            "skipped_count": len(
+                skipped
+            ),
+
+            "imported_ids": imported_ids,
+
+            "skipped": skipped,
+        }
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+# ==========================================
+# GET IMPORTED GIS FEATURES
+# ==========================================
+
+@app.get("/gis/features")
+def get_gis_features():
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    feature_type,
+                    name,
+                    source_filename,
+                    properties,
+                    ST_AsGeoJSON(geometry)
+
+                FROM imported_features
+
+                ORDER BY id;
+                """
+            )
+
+
+            rows = cursor.fetchall()
+
+
+    features = []
+
+
+    for row in rows:
+
+        features.append(
+            {
+                "id": row[0],
+
+                "feature_type": row[1],
+
+                "name": row[2],
+
+                "source_filename": row[3],
+
+                "properties": row[4],
+
+                "geometry": (
+                    json.loads(row[5])
+                    if row[5]
+                    else None
+                ),
+            }
+        )
+
+
+    return {
+        "count": len(features),
+
+        "features": features,
+    }
