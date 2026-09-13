@@ -12,6 +12,8 @@ import {
   Math as CesiumMath,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
+  Ellipsoid,
+  Cartographic,
 } from "cesium";
 
 import {
@@ -34,8 +36,11 @@ function CesiumViewer({
   validationTrigger,
   resetTrigger,
   onValidationResult,
-}) {
 
+  footprintPickTrigger,
+  footprintCancelTrigger,
+  onFootprintPicked,
+}) {
   const cesiumContainer =
     useRef(null);
 
@@ -61,6 +66,24 @@ function CesiumViewer({
     useRef(null);
 
 
+  // ==========================================
+  // FOOTPRINT PICKING REFS
+  // ==========================================
+
+  const footprintPickingRef =
+    useRef(false);
+
+  const footprintCornersRef =
+    useRef([]);
+
+  const footprintTemporaryEntitiesRef =
+    useRef([]);
+
+
+  // ==========================================
+  // CALLBACK REFS
+  // ==========================================
+
   const onSelectRef =
     useRef(onSelect);
 
@@ -69,6 +92,9 @@ function CesiumViewer({
 
   const onValidationResultRef =
     useRef(onValidationResult);
+
+  const onFootprintPickedRef =
+    useRef(onFootprintPicked);
 
 
   useEffect(() => {
@@ -89,14 +115,19 @@ function CesiumViewer({
   }, [onValidationResult]);
 
 
-  // =========================================
+  useEffect(() => {
+    onFootprintPickedRef.current =
+      onFootprintPicked;
+  }, [onFootprintPicked]);
+
+
+  // ==========================================
   // GEOJSON → CESIUM POSITIONS
-  // =========================================
+  // ==========================================
 
   function geometryToPositions(
     geometry
   ) {
-
     if (
       !geometry ||
       geometry.type !== "Polygon"
@@ -116,7 +147,6 @@ function CesiumViewer({
       ring[0][1] ===
         ring[ring.length - 1][1]
     ) {
-
       ring =
         ring.slice(
           0,
@@ -135,14 +165,13 @@ function CesiumViewer({
   }
 
 
-  // =========================================
+  // ==========================================
   // GEOMETRY BOUNDS
-  // =========================================
+  // ==========================================
 
   function getGeometryBounds(
     geometry
   ) {
-
     const coordinates =
       geometry.coordinates[0];
 
@@ -162,38 +191,28 @@ function CesiumViewer({
 
 
     return {
-
       minLon:
-        Math.min(
-          ...longitudes
-        ),
+        Math.min(...longitudes),
 
       maxLon:
-        Math.max(
-          ...longitudes
-        ),
+        Math.max(...longitudes),
 
       minLat:
-        Math.min(
-          ...latitudes
-        ),
+        Math.min(...latitudes),
 
       maxLat:
-        Math.max(
-          ...latitudes
-        ),
+        Math.max(...latitudes),
     };
   }
 
 
-  // =========================================
-  // ENTITY INFORMATION
-  // =========================================
+  // ==========================================
+  // ENTITY DATA
+  // ==========================================
 
   function getEntityData(
     entity
   ) {
-
     const viewer =
       viewerRef.current;
 
@@ -203,7 +222,6 @@ function CesiumViewer({
       !entity ||
       !entity.properties
     ) {
-
       return null;
     }
 
@@ -213,7 +231,6 @@ function CesiumViewer({
 
 
     return {
-
       type:
         entity.properties.type
           ?.getValue(time)
@@ -257,15 +274,14 @@ function CesiumViewer({
   }
 
 
-  // =========================================
-  // CHANGE VALIDATION PROPERTY
-  // =========================================
+  // ==========================================
+  // VALIDATION VALUE
+  // ==========================================
 
   function setValidation(
     entity,
     value
   ) {
-
     const property =
       entity
         ?.properties
@@ -276,29 +292,23 @@ function CesiumViewer({
       property &&
       property.setValue
     ) {
-
-      property.setValue(
-        value
-      );
+      property.setValue(value);
     }
   }
 
 
-  // =========================================
-  // RESTORE ALL PROPERTY COLORS
-  // =========================================
+  // ==========================================
+  // RESTORE COLORS
+  // ==========================================
 
   function restorePropertyColors() {
-
     for (
       const object
       of spatialObjectsRef.current
     ) {
-
       if (
         object.entity?.polygon
       ) {
-
         object.entity
           .polygon
           .material =
@@ -312,30 +322,25 @@ function CesiumViewer({
       }
     }
 
-
     selectedEntityRef.current =
       null;
   }
 
 
-  // =========================================
-  // FIND PROPERTY USING UNIT
-  // =========================================
+  // ==========================================
+  // FIND UNIT
+  // ==========================================
 
-  function findObjectByUnit(
-    unit
-  ) {
-
+  function findObjectByUnit(unit) {
     if (
       unit === null ||
       unit === undefined
     ) {
-
       return null;
     }
 
 
-    const searchUnit =
+    const target =
       String(unit)
         .trim()
         .toLowerCase();
@@ -345,25 +350,53 @@ function CesiumViewer({
       spatialObjectsRef
         .current
         .find(
-
           (object) =>
-            String(
-              object.id
-            )
+            String(object.id)
               .toLowerCase() ===
-            searchUnit
+            target
         )
       ?? null
     );
   }
 
 
-  // =========================================
-  // CREATE CESIUM VIEWER
-  // =========================================
+  // ==========================================
+  // REMOVE TEMPORARY FOOTPRINT DRAWING
+  // ==========================================
+
+  function clearFootprintDrawing() {
+    const viewer =
+      viewerRef.current;
+
+
+    if (!viewer) {
+      return;
+    }
+
+
+    for (
+      const entity
+      of footprintTemporaryEntitiesRef.current
+    ) {
+      viewer.entities.remove(
+        entity
+      );
+    }
+
+
+    footprintTemporaryEntitiesRef.current =
+      [];
+
+    footprintCornersRef.current =
+      [];
+  }
+
+
+  // ==========================================
+  // CREATE CESIUM
+  // ==========================================
 
   useEffect(() => {
-
     let cancelled =
       false;
 
@@ -374,17 +407,11 @@ function CesiumViewer({
         {
           globe: false,
 
-          baseLayerPicker:
-            false,
+          baseLayerPicker: false,
+          geocoder: false,
 
-          geocoder:
-            false,
-
-          animation:
-            false,
-
-          timeline:
-            false,
+          animation: false,
+          timeline: false,
 
           navigationHelpButton:
             false,
@@ -420,22 +447,17 @@ function CesiumViewer({
       );
 
 
-    // =====================================
-    // LOAD SCENE FROM POSTGIS
-    // =====================================
+    // ======================================
+    // LOAD POSTGIS SCENE
+    // ======================================
 
     async function loadScene() {
-
       try {
-
         const scene =
           await getScene();
 
 
-        if (
-          cancelled
-        ) {
-
+        if (cancelled) {
           return;
         }
 
@@ -454,20 +476,13 @@ function CesiumViewer({
           };
 
 
-        // ---------------------------------
-        // LOCAL ORIGIN
-        // ---------------------------------
-
         const firstParcel =
           scene.parcels[0];
 
 
-        if (
-          !firstParcel
-        ) {
-
+        if (!firstParcel) {
           console.error(
-            "No parcel found in scene"
+            "No parcel found"
           );
 
           return;
@@ -512,7 +527,6 @@ function CesiumViewer({
           zMin,
           zMax
         ) {
-
           const bounds =
             getGeometryBounds(
               geometry
@@ -534,7 +548,6 @@ function CesiumViewer({
 
 
           return {
-
             centerX:
               (
                 centerLongitude -
@@ -564,21 +577,19 @@ function CesiumViewer({
               metresPerDegreeLatitude,
 
             zMin,
-
             zMax,
           };
         }
 
 
-        // =================================
-        // PARCELS
-        // =================================
+        // ====================================
+        // PARCEL
+        // ====================================
 
         for (
           const parcel
           of scene.parcels
         ) {
-
           const positions =
             geometryToPositions(
               parcel.geometry
@@ -587,7 +598,6 @@ function CesiumViewer({
 
           const entity =
             viewer.entities.add({
-
               id:
                 `parcel-${parcel.ulpin}`,
 
@@ -595,7 +605,6 @@ function CesiumViewer({
                 parcel.name,
 
               polygon: {
-
                 hierarchy:
                   new PolygonHierarchy(
                     positions
@@ -621,7 +630,6 @@ function CesiumViewer({
               },
 
               properties: {
-
                 type:
                   "Land Parcel",
 
@@ -652,43 +660,35 @@ function CesiumViewer({
           layerEntitiesRef
             .current
             .parcels
-            .push(
-              entity
-            );
+            .push(entity);
         }
 
 
-        // =================================
-        // PROPERTY COLORS
-        // =================================
+        // ====================================
+        // COLORS
+        // ====================================
 
         const floorColors = [
-
           Color.ROYALBLUE,
-
           Color.DODGERBLUE,
-
           Color.CORNFLOWERBLUE,
-
           Color.STEELBLUE,
-
           Color.LIGHTSTEELBLUE,
+          Color.LIGHTBLUE,
         ];
 
 
-        // =================================
+        // ====================================
         // PROPERTIES
-        // =================================
+        // ====================================
 
         for (
           const property
           of scene.properties
         ) {
-
           if (
             !property.geometry
           ) {
-
             continue;
           }
 
@@ -702,27 +702,18 @@ function CesiumViewer({
           let group =
             "apartments";
 
-
           let category =
             "apartment";
 
-
           let normalColor =
             Color.ROYALBLUE
-              .withAlpha(
-                0.9
-              );
+              .withAlpha(0.9);
 
-
-          // ---------------------------------
-          // APARTMENT
-          // ---------------------------------
 
           if (
             property.type ===
             "Apartment"
           ) {
-
             group =
               "apartments";
 
@@ -730,16 +721,24 @@ function CesiumViewer({
               "apartment";
 
 
-            const floorIndex =
-              Math.max(
-                0,
-                Math.min(
-                  4,
-                  parseInt(
-                    property.floor
-                  ) - 1
-                )
+            const parsedFloor =
+              parseInt(
+                property.floor
               );
+
+
+            const floorIndex =
+              Number.isFinite(
+                parsedFloor
+              )
+                ? Math.max(
+                    0,
+                    Math.min(
+                      floorColors.length - 1,
+                      parsedFloor - 1
+                    )
+                  )
+                : 0;
 
 
             normalColor =
@@ -752,57 +751,40 @@ function CesiumViewer({
           }
 
 
-          // ---------------------------------
-          // PARKING
-          // ---------------------------------
-
           if (
             property.type ===
             "Basement Parking"
           ) {
-
             group =
               "parking";
 
             category =
               "parking";
 
-
             normalColor =
               Color.ORANGE
-                .withAlpha(
-                  0.9
-                );
+                .withAlpha(0.9);
           }
 
-
-          // ---------------------------------
-          // UTILITY
-          // ---------------------------------
 
           if (
             property.type ===
             "Underground Utility"
           ) {
-
             group =
               "utilities";
 
             category =
               "utility";
 
-
             normalColor =
               Color.CYAN
-                .withAlpha(
-                  0.9
-                );
+                .withAlpha(0.9);
           }
 
 
           const entity =
             viewer.entities.add({
-
               id:
                 property.property_id,
 
@@ -810,7 +792,6 @@ function CesiumViewer({
                 `${property.type} ${property.unit}`,
 
               polygon: {
-
                 hierarchy:
                   new PolygonHierarchy(
                     positions
@@ -833,7 +814,6 @@ function CesiumViewer({
               },
 
               properties: {
-
                 type:
                   property.type,
 
@@ -863,12 +843,8 @@ function CesiumViewer({
 
 
           layerEntitiesRef
-            .current[
-              group
-            ]
-            .push(
-              entity
-            );
+            .current[group]
+            .push(entity);
 
 
           const metrics =
@@ -882,7 +858,6 @@ function CesiumViewer({
           spatialObjectsRef
             .current
             .push({
-
               id:
                 property.unit,
 
@@ -907,11 +882,8 @@ function CesiumViewer({
               ...metrics,
 
               searchTerms: [
-
                 property.unit,
-
                 property.property_id,
-
                 property.type,
 
                 `${property.type} ${property.unit}`,
@@ -920,13 +892,12 @@ function CesiumViewer({
         }
 
 
-        // =================================
+        // ====================================
         // FLOOR SLABS
-        // =================================
+        // ====================================
 
         const apartments =
           scene.properties.filter(
-
             (property) =>
               property.type ===
               "Apartment"
@@ -936,7 +907,6 @@ function CesiumViewer({
         const floors =
           [
             ...new Set(
-
               apartments.map(
                 (property) =>
                   property.floor
@@ -949,10 +919,8 @@ function CesiumViewer({
           const floor
           of floors
         ) {
-
           const floorProperties =
             apartments.filter(
-
               (property) =>
                 property.floor ===
                 floor
@@ -963,14 +931,12 @@ function CesiumViewer({
             floorProperties.length ===
             0
           ) {
-
             continue;
           }
 
 
           const bounds =
             floorProperties.map(
-
               (property) =>
                 getGeometryBounds(
                   property.geometry
@@ -1014,29 +980,27 @@ function CesiumViewer({
             );
 
 
-          const positions =
-            [
+          const positions = [
+            Cartesian3.fromDegrees(
+              minLon,
+              minLat
+            ),
 
-              Cartesian3.fromDegrees(
-                minLon,
-                minLat
-              ),
+            Cartesian3.fromDegrees(
+              maxLon,
+              minLat
+            ),
 
-              Cartesian3.fromDegrees(
-                maxLon,
-                minLat
-              ),
+            Cartesian3.fromDegrees(
+              maxLon,
+              maxLat
+            ),
 
-              Cartesian3.fromDegrees(
-                maxLon,
-                maxLat
-              ),
-
-              Cartesian3.fromDegrees(
-                minLon,
-                maxLat
-              ),
-            ];
+            Cartesian3.fromDegrees(
+              minLon,
+              maxLat
+            ),
+          ];
 
 
           const zMin =
@@ -1046,7 +1010,6 @@ function CesiumViewer({
 
           const slab =
             viewer.entities.add({
-
               id:
                 `floor-slab-${floor}`,
 
@@ -1054,7 +1017,6 @@ function CesiumViewer({
                 `Floor ${floor} Slab`,
 
               polygon: {
-
                 hierarchy:
                   new PolygonHierarchy(
                     positions
@@ -1084,39 +1046,28 @@ function CesiumViewer({
           layerEntitiesRef
             .current
             .buildings
-            .push(
-              slab
-            );
+            .push(slab);
         }
 
 
-        // =================================
+        // ====================================
         // INITIAL CAMERA
-        // =================================
+        // ====================================
 
         viewer.zoomTo(
-
           viewer.entities,
 
           new HeadingPitchRange(
+            CesiumMath.toRadians(35),
 
-            CesiumMath.toRadians(
-              35
-            ),
-
-            CesiumMath.toRadians(
-              -20
-            ),
+            CesiumMath.toRadians(-20),
 
             220
           )
         );
       }
 
-      catch (
-        error
-      ) {
-
+      catch (error) {
         console.error(
           "Could not load PostGIS scene:",
           error
@@ -1128,9 +1079,9 @@ function CesiumViewer({
     loadScene();
 
 
-    // =====================================
+    // ======================================
     // CLICK HANDLER
-    // =====================================
+    // ======================================
 
     const handler =
       new ScreenSpaceEventHandler(
@@ -1143,8 +1094,228 @@ function CesiumViewer({
 
 
     handler.setInputAction(
-
       (movement) => {
+
+        // ==================================
+        // FOOTPRINT PICKING MODE
+        // ==================================
+
+        if (
+          footprintPickingRef.current
+        ) {
+          const cartesian =
+            viewer.camera.pickEllipsoid(
+              movement.position,
+
+              Ellipsoid.WGS84
+            );
+
+
+          if (!cartesian) {
+            return;
+          }
+
+
+          const cartographic =
+            Cartographic.fromCartesian(
+              cartesian
+            );
+
+
+          const longitude =
+            CesiumMath.toDegrees(
+              cartographic.longitude
+            );
+
+
+          const latitude =
+            CesiumMath.toDegrees(
+              cartographic.latitude
+            );
+
+
+          footprintCornersRef
+            .current
+            .push({
+              longitude,
+              latitude,
+            });
+
+
+          // -------------------------------
+          // DISPLAY CLICKED POINT
+          // -------------------------------
+
+          const pointEntity =
+            viewer.entities.add({
+              position:
+                Cartesian3.fromDegrees(
+                  longitude,
+                  latitude,
+                  1
+                ),
+
+              point: {
+                pixelSize:
+                  12,
+
+                color:
+                  Color.YELLOW,
+
+                outlineColor:
+                  Color.BLACK,
+
+                outlineWidth:
+                  2,
+
+                disableDepthTestDistance:
+                  Number.POSITIVE_INFINITY,
+              },
+            });
+
+
+          footprintTemporaryEntitiesRef
+            .current
+            .push(
+              pointEntity
+            );
+
+
+          // Need two corners
+          if (
+            footprintCornersRef
+              .current
+              .length < 2
+          ) {
+            return;
+          }
+
+
+          const first =
+            footprintCornersRef
+              .current[0];
+
+
+          const second =
+            footprintCornersRef
+              .current[1];
+
+
+          const minLon =
+            Math.min(
+              first.longitude,
+              second.longitude
+            );
+
+
+          const maxLon =
+            Math.max(
+              first.longitude,
+              second.longitude
+            );
+
+
+          const minLat =
+            Math.min(
+              first.latitude,
+              second.latitude
+            );
+
+
+          const maxLat =
+            Math.max(
+              first.latitude,
+              second.latitude
+            );
+
+
+          // -------------------------------
+          // PREVIEW RECTANGLE
+          // -------------------------------
+
+          const rectanglePositions = [
+            Cartesian3.fromDegrees(
+              minLon,
+              minLat
+            ),
+
+            Cartesian3.fromDegrees(
+              maxLon,
+              minLat
+            ),
+
+            Cartesian3.fromDegrees(
+              maxLon,
+              maxLat
+            ),
+
+            Cartesian3.fromDegrees(
+              minLon,
+              maxLat
+            ),
+          ];
+
+
+          const preview =
+            viewer.entities.add({
+              name:
+                "New Property Footprint",
+
+              polygon: {
+                hierarchy:
+                  new PolygonHierarchy(
+                    rectanglePositions
+                  ),
+
+                height:
+                  0.8,
+
+                extrudedHeight:
+                  1.2,
+
+                material:
+                  Color.YELLOW
+                    .withAlpha(
+                      0.45
+                    ),
+
+                outline:
+                  true,
+
+                outlineColor:
+                  Color.BLACK,
+              },
+            });
+
+
+          footprintTemporaryEntitiesRef
+            .current
+            .push(preview);
+
+
+          footprintPickingRef.current =
+            false;
+
+
+          viewer.canvas.style.cursor =
+            "default";
+
+
+          onFootprintPickedRef.current?.({
+            minLon,
+            minLat,
+            maxLon,
+            maxLat,
+          });
+
+
+          return;
+        }
+
+
+        // ==================================
+        // NORMAL PROPERTY CLICK
+        // ==================================
 
         const picked =
           viewer.scene.pick(
@@ -1156,7 +1327,6 @@ function CesiumViewer({
           !picked ||
           !picked.id
         ) {
-
           return;
         }
 
@@ -1167,10 +1337,7 @@ function CesiumViewer({
           );
 
 
-        if (
-          data
-        ) {
-
+        if (data) {
           onSelectRef.current(
             data
           );
@@ -1182,12 +1349,11 @@ function CesiumViewer({
     );
 
 
-    // =====================================
+    // ======================================
     // CLEANUP
-    // =====================================
+    // ======================================
 
     return () => {
-
       cancelled =
         true;
 
@@ -1197,7 +1363,6 @@ function CesiumViewer({
         !clickHandlerRef.current
           .isDestroyed()
       ) {
-
         clickHandlerRef.current
           .destroy();
       }
@@ -1206,7 +1371,6 @@ function CesiumViewer({
       if (
         !viewer.isDestroyed()
       ) {
-
         viewer.destroy();
       }
 
@@ -1218,12 +1382,71 @@ function CesiumViewer({
   }, []);
 
 
-  // =========================================
-  // LAYERS
-  // =========================================
+  // ==========================================
+  // START FOOTPRINT PICKING
+  // ==========================================
 
   useEffect(() => {
+    if (
+      footprintPickTrigger === 0 ||
+      !viewerRef.current
+    ) {
+      return;
+    }
 
+
+    clearFootprintDrawing();
+
+
+    footprintPickingRef.current =
+      true;
+
+
+    footprintCornersRef.current =
+      [];
+
+
+    viewerRef.current.canvas.style.cursor =
+      "crosshair";
+
+  }, [
+    footprintPickTrigger,
+  ]);
+
+
+  // ==========================================
+  // CANCEL FOOTPRINT PICKING
+  // ==========================================
+
+  useEffect(() => {
+    if (
+      footprintCancelTrigger === 0 ||
+      !viewerRef.current
+    ) {
+      return;
+    }
+
+
+    footprintPickingRef.current =
+      false;
+
+
+    viewerRef.current.canvas.style.cursor =
+      "default";
+
+
+    clearFootprintDrawing();
+
+  }, [
+    footprintCancelTrigger,
+  ]);
+
+
+  // ==========================================
+  // LAYERS
+  // ==========================================
+
+  useEffect(() => {
     const groups =
       layerEntitiesRef.current;
 
@@ -1232,7 +1455,6 @@ function CesiumViewer({
       const entity
       of groups.parcels
     ) {
-
       entity.show =
         layers.parcels;
     }
@@ -1242,7 +1464,6 @@ function CesiumViewer({
       const entity
       of groups.buildings
     ) {
-
       entity.show =
         layers.buildings;
     }
@@ -1252,7 +1473,6 @@ function CesiumViewer({
       const entity
       of groups.apartments
     ) {
-
       entity.show =
         layers.apartments;
     }
@@ -1262,7 +1482,6 @@ function CesiumViewer({
       const entity
       of groups.parking
     ) {
-
       entity.show =
         layers.parking;
     }
@@ -1272,7 +1491,6 @@ function CesiumViewer({
       const entity
       of groups.utilities
     ) {
-
       entity.show =
         layers.utilities;
     }
@@ -1280,17 +1498,15 @@ function CesiumViewer({
   }, [layers]);
 
 
-  // =========================================
-  // SEARCH + CAMERA FOCUS
-  // =========================================
+  // ==========================================
+  // SEARCH
+  // ==========================================
 
   useEffect(() => {
-
     if (
       searchTrigger === 0 ||
       !viewerRef.current
     ) {
-
       return;
     }
 
@@ -1301,10 +1517,7 @@ function CesiumViewer({
         .toLowerCase();
 
 
-    if (
-      !query
-    ) {
-
+    if (!query) {
       return;
     }
 
@@ -1313,33 +1526,23 @@ function CesiumViewer({
       spatialObjectsRef
         .current
         .find(
-
           (object) =>
-            String(
-              object.id
-            )
+            String(object.id)
               .toLowerCase() ===
             query
         );
 
 
-    if (
-      !result
-    ) {
-
+    if (!result) {
       result =
         spatialObjectsRef
           .current
           .find(
-
             (object) =>
               object.searchTerms
                 .some(
-
                   (term) =>
-                    String(
-                      term
-                    )
+                    String(term)
                       .toLowerCase()
                       .includes(
                         query
@@ -1349,24 +1552,19 @@ function CesiumViewer({
     }
 
 
-    if (
-      !result
-    ) {
-
-      onSearchResultRef.current({
-        found: false,
-      });
+    if (!result) {
+      onSearchResultRef
+        .current({
+          found: false,
+        });
 
       return;
     }
 
 
-    // Restore old yellow search result
-
     if (
       selectedEntityRef.current
     ) {
-
       const previous =
         selectedEntityRef.current;
 
@@ -1408,7 +1606,6 @@ function CesiumViewer({
 
 
     viewerRef.current.flyTo(
-
       result.entity,
 
       {
@@ -1417,7 +1614,6 @@ function CesiumViewer({
 
         offset:
           new HeadingPitchRange(
-
             CesiumMath.toRadians(
               35
             ),
@@ -1438,24 +1634,20 @@ function CesiumViewer({
       );
 
 
-    if (
-      data
-    ) {
-
+    if (data) {
       onSelectRef.current(
         data
       );
     }
 
 
-    onSearchResultRef.current({
+    onSearchResultRef
+      .current({
+        found: true,
 
-      found:
-        true,
-
-      name:
-        result.entity.name,
-    });
+        name:
+          result.entity.name,
+      });
 
   }, [
     searchTrigger,
@@ -1463,40 +1655,27 @@ function CesiumViewer({
   ]);
 
 
-  // =========================================
-  // POSTGIS TOPOLOGY VALIDATION
-  // =========================================
+  // ==========================================
+  // POSTGIS VALIDATION
+  // ==========================================
 
   useEffect(() => {
-
     if (
       validationTrigger === 0
     ) {
-
       return;
     }
 
 
     async function runValidation() {
-
       try {
-
-        // ---------------------------------
-        // REMOVE SEARCH HIGHLIGHT
-        // ---------------------------------
-
         restorePropertyColors();
 
-
-        // ---------------------------------
-        // RESET STATUS TO VALID
-        // ---------------------------------
 
         for (
           const object
           of spatialObjectsRef.current
         ) {
-
           setValidation(
             object.entity,
             "Valid"
@@ -1504,39 +1683,20 @@ function CesiumViewer({
         }
 
 
-        // =================================
-        // ASK FASTAPI → POSTGIS
-        // =================================
-
         const result =
           await validateTopology();
 
 
-        // =================================
-        // DATABASE SAYS NO CONFLICT
-        // =================================
-
-        if (
-          result.valid
-        ) {
-
-          onValidationResultRef.current({
-
-            valid:
-              true,
-
-            conflicts:
-              [],
-          });
-
+        if (result.valid) {
+          onValidationResultRef
+            .current({
+              valid: true,
+              conflicts: [],
+            });
 
           return;
         }
 
-
-        // =================================
-        // DATABASE FOUND CONFLICTS
-        // =================================
 
         const uiConflicts =
           [];
@@ -1550,7 +1710,6 @@ function CesiumViewer({
           const conflict
           of result.conflicts
         ) {
-
           const objectA =
             findObjectByUnit(
               conflict
@@ -1567,14 +1726,7 @@ function CesiumViewer({
             );
 
 
-          // -------------------------------
-          // HIGHLIGHT OBJECT A
-          // -------------------------------
-
-          if (
-            objectA
-          ) {
-
+          if (objectA) {
             objectA.entity
               .polygon
               .material =
@@ -1582,12 +1734,6 @@ function CesiumViewer({
                   .withAlpha(
                     0.95
                   );
-
-
-            objectA.entity
-              .polygon
-              .outlineColor =
-                Color.WHITE;
 
 
             setValidation(
@@ -1599,21 +1745,13 @@ function CesiumViewer({
             if (
               !firstConflictObject
             ) {
-
               firstConflictObject =
                 objectA;
             }
           }
 
 
-          // -------------------------------
-          // HIGHLIGHT OBJECT B
-          // -------------------------------
-
-          if (
-            objectB
-          ) {
-
+          if (objectB) {
             objectB.entity
               .polygon
               .material =
@@ -1623,12 +1761,6 @@ function CesiumViewer({
                   );
 
 
-            objectB.entity
-              .polygon
-              .outlineColor =
-                Color.WHITE;
-
-
             setValidation(
               objectB.entity,
               "Invalid – PostGIS conflict"
@@ -1636,12 +1768,7 @@ function CesiumViewer({
           }
 
 
-          // -------------------------------
-          // FORMAT FOR EXISTING UI
-          // -------------------------------
-
           uiConflicts.push({
-
             type:
               conflict.type,
 
@@ -1654,35 +1781,24 @@ function CesiumViewer({
             volume:
               Number(
                 conflict.overlap_volume_m3
-              ).toFixed(
-                1
-              ),
+              ).toFixed(1),
           });
         }
 
 
-        // =================================
-        // UPDATE VALIDATION PANEL
-        // =================================
+        onValidationResultRef
+          .current({
+            valid:
+              false,
 
-        onValidationResultRef.current({
+            conflicts:
+              uiConflicts,
+          });
 
-          valid:
-            false,
-
-          conflicts:
-            uiConflicts,
-        });
-
-
-        // =================================
-        // SHOW FIRST CONFLICT DETAILS
-        // =================================
 
         if (
           firstConflictObject
         ) {
-
           const data =
             getEntityData(
               firstConflictObject
@@ -1690,22 +1806,15 @@ function CesiumViewer({
             );
 
 
-          if (
-            data
-          ) {
-
+          if (data) {
             onSelectRef.current(
               data
             );
           }
 
 
-          // Fly toward first conflict
-
           viewerRef.current.flyTo(
-
-            firstConflictObject
-              .entity,
+            firstConflictObject.entity,
 
             {
               duration:
@@ -1713,7 +1822,6 @@ function CesiumViewer({
 
               offset:
                 new HeadingPitchRange(
-
                   CesiumMath.toRadians(
                     35
                   ),
@@ -1729,37 +1837,33 @@ function CesiumViewer({
         }
       }
 
-      catch (
-        error
-      ) {
-
+      catch (error) {
         console.error(
           "PostGIS validation error:",
           error
         );
 
 
-        onValidationResultRef.current({
+        onValidationResultRef
+          .current({
+            valid: false,
 
-          valid:
-            false,
+            conflicts: [
+              {
+                type:
+                  "Validation service error",
 
-          conflicts: [
-            {
-              type:
-                "Validation service error",
+                objectA:
+                  "FastAPI",
 
-              objectA:
-                "FastAPI",
+                objectB:
+                  "PostGIS",
 
-              objectB:
-                "PostGIS",
-
-              volume:
-                "—",
-            },
-          ],
-        });
+                volume:
+                  "—",
+              },
+            ],
+          });
       }
     }
 
@@ -1771,16 +1875,14 @@ function CesiumViewer({
   ]);
 
 
-  // =========================================
+  // ==========================================
   // RESET VALIDATION
-  // =========================================
+  // ==========================================
 
   useEffect(() => {
-
     if (
       resetTrigger === 0
     ) {
-
       return;
     }
 
@@ -1792,7 +1894,6 @@ function CesiumViewer({
       const object
       of spatialObjectsRef.current
     ) {
-
       setValidation(
         object.entity,
         "Not checked"
@@ -1804,21 +1905,15 @@ function CesiumViewer({
   ]);
 
 
-  // =========================================
+  // ==========================================
   // RENDER
-  // =========================================
+  // ==========================================
 
   return (
-
     <div
-      ref={
-        cesiumContainer
-      }
-
-      className=
-        "cesium-container"
+      ref={cesiumContainer}
+      className="cesium-container"
     />
-
   );
 }
 

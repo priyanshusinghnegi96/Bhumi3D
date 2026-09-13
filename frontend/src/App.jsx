@@ -1,6 +1,4 @@
-import {
-  useState,
-} from "react";
+import { useState } from "react";
 
 import "./App.css";
 
@@ -13,34 +11,23 @@ import {
 
 
 function App() {
-
   // ==========================================
   // SELECTED PROPERTY
   // ==========================================
 
-  const [
-    selectedProperty,
-    setSelectedProperty,
-  ] = useState(null);
+  const [selectedProperty, setSelectedProperty] =
+    useState(null);
 
 
   // ==========================================
   // LAYERS
   // ==========================================
 
-  const [
-    layers,
-    setLayers,
-  ] = useState({
-
+  const [layers, setLayers] = useState({
     parcels: true,
-
     buildings: true,
-
     apartments: true,
-
     parking: true,
-
     utilities: true,
   });
 
@@ -49,28 +36,17 @@ function App() {
   // SEARCH
   // ==========================================
 
-  const [
-    searchText,
-    setSearchText,
-  ] = useState("");
+  const [searchText, setSearchText] =
+    useState("");
 
+  const [searchTrigger, setSearchTrigger] =
+    useState(0);
 
-  const [
-    searchTrigger,
-    setSearchTrigger,
-  ] = useState(0);
+  const [searchMessage, setSearchMessage] =
+    useState("");
 
-
-  const [
-    searchMessage,
-    setSearchMessage,
-  ] = useState("");
-
-
-  const [
-    backendConnected,
-    setBackendConnected,
-  ] = useState(null);
+  const [backendConnected, setBackendConnected] =
+    useState(null);
 
 
   // ==========================================
@@ -82,12 +58,10 @@ function App() {
     setValidationTrigger,
   ] = useState(0);
 
-
   const [
     resetTrigger,
     setResetTrigger,
   ] = useState(0);
-
 
   const [
     validationResult,
@@ -96,7 +70,7 @@ function App() {
 
 
   // ==========================================
-  // ADD PROPERTY MODAL
+  // ADD PROPERTY
   // ==========================================
 
   const [
@@ -104,18 +78,15 @@ function App() {
     setShowAddProperty,
   ] = useState(false);
 
-
   const [
     sceneVersion,
     setSceneVersion,
   ] = useState(0);
 
-
   const [
     createMessage,
     setCreateMessage,
   ] = useState("");
-
 
   const [
     isCreating,
@@ -123,13 +94,32 @@ function App() {
   ] = useState(false);
 
 
-  const [
-    form,
-    setForm,
-  ] = useState({
+  // ==========================================
+  // MAP FOOTPRINT PICKING
+  // ==========================================
 
-    property_type:
-      "Apartment",
+  const [
+    footprintPicking,
+    setFootprintPicking,
+  ] = useState(false);
+
+  const [
+    footprintPickTrigger,
+    setFootprintPickTrigger,
+  ] = useState(0);
+
+  const [
+    footprintCancelTrigger,
+    setFootprintCancelTrigger,
+  ] = useState(0);
+
+
+  // ==========================================
+  // PROPERTY FORM
+  // ==========================================
+
+  const [form, setForm] = useState({
+    property_type: "Apartment",
 
     parent_ulpin:
       "ABC12345678901",
@@ -141,7 +131,7 @@ function App() {
       "06",
 
     unit:
-      "602",
+      "603",
 
     z_min:
       "35",
@@ -150,30 +140,26 @@ function App() {
       "42",
 
     min_lon:
-      "77.209005",
+      "77.20879",
 
     min_lat:
-      "28.613904",
+      "28.61390",
 
     max_lon:
-      "77.209210",
+      "77.20899",
 
     max_lat:
-      "28.614039",
+      "28.61403",
   });
 
 
   // ==========================================
-  // LAYER CHECKBOX
+  // LAYER CHANGE
   // ==========================================
 
-  function handleLayerChange(
-    layerName
-  ) {
-
+  function handleLayerChange(layerName) {
     setLayers(
       (previous) => ({
-
         ...previous,
 
         [layerName]:
@@ -184,40 +170,26 @@ function App() {
 
 
   // ==========================================
-  // SEARCH PROPERTY
+  // SEARCH
   // ==========================================
 
-  async function handleSearch(
-    event
-  ) {
-
+  async function handleSearch(event) {
     event.preventDefault();
-
 
     const query =
       searchText.trim();
-
 
     if (!query) {
       return;
     }
 
-
     try {
-
       const property =
-        await getPropertyByUnit(
-          query
-        );
+        await getPropertyByUnit(query);
 
-
-      setBackendConnected(
-        true
-      );
-
+      setBackendConnected(true);
 
       setSelectedProperty({
-
         type:
           property.type,
 
@@ -243,24 +215,17 @@ function App() {
           property.validation,
       });
 
-
       setSearchMessage(
         `Loaded from API: ${property.unit}`
       );
 
-
       setSearchTrigger(
-        (value) =>
-          value + 1
+        (value) => value + 1
       );
     }
 
     catch {
-
-      setBackendConnected(
-        false
-      );
-
+      setBackendConnected(false);
 
       setSearchMessage(
         "Property not found or backend unavailable."
@@ -269,18 +234,8 @@ function App() {
   }
 
 
-  // ==========================================
-  // CESIUM SEARCH RESULT
-  // ==========================================
-
-  function handleSearchResult(
-    result
-  ) {
-
-    if (
-      result?.found
-    ) {
-
+  function handleSearchResult(result) {
+    if (result?.found) {
       setSearchMessage(
         `Focused on ${result.name}`
       );
@@ -289,36 +244,26 @@ function App() {
 
 
   // ==========================================
-  // VALIDATION RESULT
+  // VALIDATION
   // ==========================================
 
-  function handleValidationResult(
-    result
-  ) {
-
-    setValidationResult(
-      result
-    );
+  function handleValidationResult(result) {
+    setValidationResult(result);
   }
 
 
   // ==========================================
-  // FORM CHANGE
+  // NORMAL FORM CHANGE
   // ==========================================
 
-  function handleFormChange(
-    event
-  ) {
-
+  function handleFormChange(event) {
     const {
       name,
       value,
     } = event.target;
 
-
     setForm(
       (previous) => ({
-
         ...previous,
 
         [name]:
@@ -329,16 +274,12 @@ function App() {
 
 
   // ==========================================
-  // AUTO HEIGHT WHEN FLOOR CHANGES
+  // FLOOR → AUTOMATIC HEIGHT
   // ==========================================
 
-  function handleFloorChange(
-    event
-  ) {
-
+  function handleFloorChange(event) {
     const value =
       event.target.value;
-
 
     const floorNumber =
       Number(
@@ -348,50 +289,35 @@ function App() {
         )
       );
 
-
     if (
-      Number.isFinite(
-        floorNumber
-      ) &&
+      Number.isFinite(floorNumber) &&
       floorNumber > 0
     ) {
-
       const zMin =
-        (
-          floorNumber - 1
-        ) * 7;
-
+        (floorNumber - 1) * 7;
 
       const zMax =
         floorNumber * 7;
 
-
       setForm(
         (previous) => ({
-
           ...previous,
 
           floor:
             value,
 
           z_min:
-            String(
-              zMin
-            ),
+            String(zMin),
 
           z_max:
-            String(
-              zMax
-            ),
+            String(zMax),
         })
       );
     }
 
     else {
-
       setForm(
         (previous) => ({
-
           ...previous,
 
           floor:
@@ -403,31 +329,86 @@ function App() {
 
 
   // ==========================================
+  // START PICKING FOOTPRINT
+  // ==========================================
+
+  function startFootprintPicking() {
+    setCreateMessage("");
+
+    setShowAddProperty(false);
+
+    setFootprintPicking(true);
+
+    setFootprintPickTrigger(
+      (value) => value + 1
+    );
+  }
+
+
+  // ==========================================
+  // FOOTPRINT RECEIVED FROM CESIUM
+  // ==========================================
+
+  function handleFootprintPicked(bounds) {
+    setForm(
+      (previous) => ({
+        ...previous,
+
+        min_lon:
+          bounds.minLon.toFixed(7),
+
+        min_lat:
+          bounds.minLat.toFixed(7),
+
+        max_lon:
+          bounds.maxLon.toFixed(7),
+
+        max_lat:
+          bounds.maxLat.toFixed(7),
+      })
+    );
+
+    setFootprintPicking(false);
+
+    setCreateMessage(
+      "✓ Footprint selected from the 3D map."
+    );
+
+    setShowAddProperty(true);
+  }
+
+
+  // ==========================================
+  // CANCEL FOOTPRINT PICK
+  // ==========================================
+
+  function cancelFootprintPicking() {
+    setFootprintPicking(false);
+
+    setFootprintCancelTrigger(
+      (value) => value + 1
+    );
+
+    setShowAddProperty(true);
+  }
+
+
+  // ==========================================
   // CREATE PROPERTY
   // ==========================================
 
-  async function handleCreateProperty(
-    event
-  ) {
-
+  async function handleCreateProperty(event) {
     event.preventDefault();
 
-
-    setIsCreating(
-      true
-    );
-
+    setIsCreating(true);
 
     setCreateMessage(
       "Creating property..."
     );
 
-
     try {
-
       const result =
         await createProperty({
-
           property_type:
             form.property_type,
 
@@ -444,62 +425,39 @@ function App() {
             form.unit,
 
           z_min:
-            Number(
-              form.z_min
-            ),
+            Number(form.z_min),
 
           z_max:
-            Number(
-              form.z_max
-            ),
+            Number(form.z_max),
 
           min_lon:
-            Number(
-              form.min_lon
-            ),
+            Number(form.min_lon),
 
           min_lat:
-            Number(
-              form.min_lat
-            ),
+            Number(form.min_lat),
 
           max_lon:
-            Number(
-              form.max_lon
-            ),
+            Number(form.max_lon),
 
           max_lat:
-            Number(
-              form.max_lat
-            ),
+            Number(form.max_lat),
         });
 
 
-      setBackendConnected(
-        true
-      );
-
+      setBackendConnected(true);
 
       setCreateMessage(
         `Created: ${result.property_id}`
       );
 
 
-      // --------------------------------------
-      // Reload Cesium scene from PostGIS
-      // --------------------------------------
-
+      // Reload PostGIS scene
       setSceneVersion(
-        (value) =>
-          value + 1
+        (value) => value + 1
       );
 
 
-      // --------------------------------------
-      // Search for newly created property
-      // after scene reload
-      // --------------------------------------
-
+      // Prepare search for new unit
       setSearchText(
         result.unit
       );
@@ -507,101 +465,69 @@ function App() {
 
       setTimeout(
         () => {
-
           setSearchTrigger(
             (value) =>
               value + 1
           );
-
         },
-        1000
+        1200
       );
 
 
-      // Give user time to read generated ID
-
       setTimeout(
         () => {
-
           setShowAddProperty(
             false
           );
-
         },
         1800
       );
     }
 
-    catch (
-      error
-    ) {
-
+    catch (error) {
       setCreateMessage(
         error.message
       );
     }
 
     finally {
-
-      setIsCreating(
-        false
-      );
+      setIsCreating(false);
     }
   }
 
 
   return (
-
-    <div
-      className="app"
-    >
+    <div className="app">
 
       {/* ===================================
           HEADER
       =================================== */}
 
-      <header
-        className="topbar"
-      >
+      <header className="topbar">
 
-        <div
-          className="brand"
-        >
+        <div className="brand">
 
-          <div
-            className="brand-title"
-          >
+          <div className="brand-title">
             Bhumi3D
           </div>
 
-          <div
-            className="brand-subtitle"
-          >
+          <div className="brand-subtitle">
             3D ULPIN & Vertical Property Mapping
           </div>
 
         </div>
 
 
-        <div
-          className="header-actions"
-        >
+        <div className="header-actions">
 
           <button
             className="add-property-button"
 
-            onClick={
-              () => {
+            onClick={() => {
+              setCreateMessage("");
 
-                setCreateMessage(
-                  ""
-                );
-
-                setShowAddProperty(
-                  true
-                );
-              }
-            }
+              setShowAddProperty(true);
+            }}
           >
             + Add Property
           </button>
@@ -610,23 +536,17 @@ function App() {
           <div
             className={
               backendConnected === false
-
                 ? "backend-status offline"
-
                 : "backend-status online"
             }
           >
 
-            <span
-              className="status-dot"
-            />
+            <span className="status-dot" />
 
             Backend:
             {
               backendConnected === false
-
                 ? " Offline"
-
                 : " Connected"
             }
 
@@ -638,24 +558,18 @@ function App() {
 
 
       {/* ===================================
-          MAIN WORKSPACE
+          WORKSPACE
       =================================== */}
 
-      <main
-        className="workspace"
-      >
+      <main className="workspace">
 
         {/* =================================
             LEFT SIDEBAR
         ================================= */}
 
-        <aside
-          className="left-sidebar"
-        >
+        <aside className="left-sidebar">
 
-          <section
-            className="sidebar-section"
-          >
+          <section className="sidebar-section">
 
             <h3>
               Property Search
@@ -664,33 +578,25 @@ function App() {
 
             <form
               className="search-form"
-
-              onSubmit={
-                handleSearch
-              }
+              onSubmit={handleSearch}
             >
 
               <input
                 type="text"
 
-                value={
-                  searchText
-                }
+                value={searchText}
 
-                onChange={
-                  (event) =>
-                    setSearchText(
-                      event.target.value
-                    )
+                onChange={(event) =>
+                  setSearchText(
+                    event.target.value
+                  )
                 }
 
                 placeholder="403, P03, W-001..."
               />
 
 
-              <button
-                type="submit"
-              >
+              <button type="submit">
                 Search
               </button>
 
@@ -699,13 +605,8 @@ function App() {
 
             {
               searchMessage && (
-
-                <div
-                  className="search-message"
-                >
-                  {
-                    searchMessage
-                  }
+                <div className="search-message">
+                  {searchMessage}
                 </div>
               )
             }
@@ -713,9 +614,7 @@ function App() {
           </section>
 
 
-          <section
-            className="sidebar-section"
-          >
+          <section className="sidebar-section">
 
             <h3>
               Layers
@@ -749,54 +648,40 @@ function App() {
                   "Underground Utility",
                 ],
               ]
-              .map(
-                (
-                  [
-                    key,
-                    label,
-                  ]
-                ) => (
+                .map(
+                  ([key, label]) => (
+                    <label
+                      className="layer-row"
+                      key={key}
+                    >
 
-                  <label
-                    className="layer-row"
+                      <input
+                        type="checkbox"
 
-                    key={
-                      key
-                    }
-                  >
+                        checked={
+                          layers[key]
+                        }
 
-                    <input
-                      type="checkbox"
-
-                      checked={
-                        layers[key]
-                      }
-
-                      onChange={
-                        () =>
+                        onChange={() =>
                           handleLayerChange(
                             key
                           )
-                      }
-                    />
+                        }
+                      />
 
-                    <span>
-                      {
-                        label
-                      }
-                    </span>
+                      <span>
+                        {label}
+                      </span>
 
-                  </label>
+                    </label>
+                  )
                 )
-              )
             }
 
           </section>
 
 
-          <section
-            className="sidebar-section"
-          >
+          <section className="sidebar-section">
 
             <h3>
               Topology Validation
@@ -806,12 +691,11 @@ function App() {
             <button
               className="validation-button"
 
-              onClick={
-                () =>
-                  setValidationTrigger(
-                    (value) =>
-                      value + 1
-                  )
+              onClick={() =>
+                setValidationTrigger(
+                  (value) =>
+                    value + 1
+                )
               }
             >
               Run Validation
@@ -821,19 +705,14 @@ function App() {
             <button
               className="reset-button"
 
-              onClick={
-                () => {
+              onClick={() => {
+                setResetTrigger(
+                  (value) =>
+                    value + 1
+                );
 
-                  setResetTrigger(
-                    (value) =>
-                      value + 1
-                  );
-
-                  setValidationResult(
-                    null
-                  );
-                }
-              }
+                setValidationResult(null);
+              }}
             >
               Reset Validation
             </button>
@@ -841,34 +720,26 @@ function App() {
 
             {
               validationResult && (
-
-                <div
-                  className="validation-results"
-                >
+                <div className="validation-results">
 
                   {
                     validationResult.valid
-
                       ? (
-
-                        <div
-                          className="validation-success"
-                        >
+                        <div className="validation-success">
                           ✓ No spatial conflicts found
                         </div>
                       )
 
                       : (
-
                         <>
-                          <div
-                            className="validation-error"
-                          >
+                          <div className="validation-error">
                             {
                               validationResult
                                 .conflicts
                                 .length
-                            } conflict(s) detected
+                            }
+                            {" "}
+                            conflict(s) detected
                           </div>
 
 
@@ -880,25 +751,17 @@ function App() {
                                   conflict,
                                   index
                                 ) => (
-
                                   <div
                                     className="conflict-card"
-
-                                    key={
-                                      index
-                                    }
+                                    key={index}
                                   >
 
                                     <strong>
-                                      {
-                                        conflict.type
-                                      }
+                                      {conflict.type}
                                     </strong>
 
                                     <div>
-                                      {
-                                        conflict.objectA
-                                      }
+                                      {conflict.objectA}
                                     </div>
 
                                     <div>
@@ -906,17 +769,13 @@ function App() {
                                     </div>
 
                                     <div>
-                                      {
-                                        conflict.objectB
-                                      }
+                                      {conflict.objectB}
                                     </div>
 
                                     <small>
                                       Overlap:
                                       {" "}
-                                      {
-                                        conflict.volume
-                                      }
+                                      {conflict.volume}
                                       {" "}
                                       m³
                                     </small>
@@ -925,7 +784,6 @@ function App() {
                                 )
                               )
                           }
-
                         </>
                       )
                   }
@@ -937,51 +795,33 @@ function App() {
           </section>
 
 
-          <section
-            className="sidebar-section"
-          >
+          <section className="sidebar-section">
 
             <h3>
               Legend
             </h3>
 
 
-            <div
-              className="legend-item"
-            >
-              <span
-                className="legend blue"
-              />
+            <div className="legend-item">
+              <span className="legend blue" />
               Apartment
             </div>
 
 
-            <div
-              className="legend-item"
-            >
-              <span
-                className="legend orange"
-              />
+            <div className="legend-item">
+              <span className="legend orange" />
               Parking
             </div>
 
 
-            <div
-              className="legend-item"
-            >
-              <span
-                className="legend cyan"
-              />
+            <div className="legend-item">
+              <span className="legend cyan" />
               Utility
             </div>
 
 
-            <div
-              className="legend-item"
-            >
-              <span
-                className="legend red"
-              />
+            <div className="legend-item">
+              <span className="legend red" />
               Spatial Conflict
             </div>
 
@@ -991,26 +831,19 @@ function App() {
 
 
         {/* =================================
-            CESIUM
+            CESIUM MAP
         ================================= */}
 
-        <section
-          className="map-area"
-        >
+        <section className="map-area">
 
           <CesiumViewer
-
-            key={
-              sceneVersion
-            }
+            key={sceneVersion}
 
             onSelect={
               setSelectedProperty
             }
 
-            layers={
-              layers
-            }
+            layers={layers}
 
             searchText={
               searchText
@@ -1035,18 +868,126 @@ function App() {
             onValidationResult={
               handleValidationResult
             }
+
+            footprintPickTrigger={
+              footprintPickTrigger
+            }
+
+            footprintCancelTrigger={
+              footprintCancelTrigger
+            }
+
+            onFootprintPicked={
+              handleFootprintPicked
+            }
           />
+
+
+          {/* =================================
+              FOOTPRINT PICKING MESSAGE
+          ================================= */}
+
+          {
+            footprintPicking && (
+              <div
+                style={{
+                  position: "absolute",
+
+                  top: "18px",
+                  left: "50%",
+
+                  transform:
+                    "translateX(-50%)",
+
+                  zIndex: 50,
+
+                  width: "360px",
+                  maxWidth: "90%",
+
+                  padding:
+                    "12px 14px",
+
+                  borderRadius:
+                    "7px",
+
+                  background:
+                    "rgba(13, 56, 40, 0.95)",
+
+                  color:
+                    "white",
+
+                  boxShadow:
+                    "0 5px 20px rgba(0,0,0,0.25)",
+
+                  textAlign:
+                    "center",
+                }}
+              >
+
+                <strong>
+                  Select Property Footprint
+                </strong>
+
+
+                <div
+                  style={{
+                    marginTop: "5px",
+
+                    fontSize: "12px",
+
+                    opacity: 0.85,
+                  }}
+                >
+                  Click the first corner,
+                  then click the opposite corner.
+                </div>
+
+
+                <button
+                  type="button"
+
+                  onClick={
+                    cancelFootprintPicking
+                  }
+
+                  style={{
+                    marginTop:
+                      "9px",
+
+                    padding:
+                      "6px 14px",
+
+                    border:
+                      "1px solid rgba(255,255,255,0.5)",
+
+                    borderRadius:
+                      "4px",
+
+                    background:
+                      "transparent",
+
+                    color:
+                      "white",
+
+                    cursor:
+                      "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+
+              </div>
+            )
+          }
 
         </section>
 
 
         {/* =================================
-            PROPERTY PANEL
+            PROPERTY INFORMATION
         ================================= */}
 
-        <aside
-          className="property-panel"
-        >
+        <aside className="property-panel">
 
           <h2>
             Property Information
@@ -1055,21 +996,14 @@ function App() {
 
           {
             !selectedProperty
-
               ? (
-
-                <div
-                  className="empty-property"
-                >
+                <div className="empty-property">
                   Click a 3D property or search for a unit.
                 </div>
               )
 
               : (
-
-                <div
-                  className="property-details"
-                >
+                <div className="property-details">
 
                   <InfoRow
                     label="Type"
@@ -1078,14 +1012,12 @@ function App() {
                     }
                   />
 
-
                   <InfoRow
                     label="Parent ULPIN"
                     value={
                       selectedProperty.parentUlpIn
                     }
                   />
-
 
                   <InfoRow
                     label="Spatial ID"
@@ -1094,14 +1026,12 @@ function App() {
                     }
                   />
 
-
                   <InfoRow
                     label="Building"
                     value={
                       selectedProperty.building
                     }
                   />
-
 
                   <InfoRow
                     label="Floor"
@@ -1110,7 +1040,6 @@ function App() {
                     }
                   />
 
-
                   <InfoRow
                     label="Unit"
                     value={
@@ -1118,14 +1047,12 @@ function App() {
                     }
                   />
 
-
                   <InfoRow
                     label="Vertical Range"
                     value={
                       selectedProperty.verticalRange
                     }
                   />
-
 
                   <InfoRow
                     label="Validation"
@@ -1149,18 +1076,11 @@ function App() {
 
       {
         showAddProperty && (
+          <div className="modal-backdrop">
 
-          <div
-            className="modal-backdrop"
-          >
+            <div className="property-modal">
 
-            <div
-              className="property-modal"
-            >
-
-              <div
-                className="modal-header"
-              >
+              <div className="modal-header">
 
                 <div>
 
@@ -1169,7 +1089,7 @@ function App() {
                   </h2>
 
                   <p>
-                    The spatial ID will be generated automatically by PostgreSQL.
+                    PostgreSQL will automatically generate the linked spatial ID.
                   </p>
 
                 </div>
@@ -1180,11 +1100,10 @@ function App() {
 
                   type="button"
 
-                  onClick={
-                    () =>
-                      setShowAddProperty(
-                        false
-                      )
+                  onClick={() =>
+                    setShowAddProperty(
+                      false
+                    )
                   }
                 >
                   ×
@@ -1202,7 +1121,6 @@ function App() {
               >
 
                 <label>
-
                   Property Type
 
                   <select
@@ -1235,7 +1153,6 @@ function App() {
 
 
                 <label>
-
                   Parent ULPIN
 
                   <input
@@ -1251,16 +1168,12 @@ function App() {
 
                     required
                   />
-
                 </label>
 
 
-                <div
-                  className="form-grid"
-                >
+                <div className="form-grid">
 
                   <label>
-
                     Building
 
                     <input
@@ -1274,12 +1187,10 @@ function App() {
                         handleFormChange
                       }
                     />
-
                   </label>
 
 
                   <label>
-
                     Floor
 
                     <input
@@ -1295,12 +1206,10 @@ function App() {
 
                       required
                     />
-
                   </label>
 
 
                   <label>
-
                     Unit
 
                     <input
@@ -1316,12 +1225,10 @@ function App() {
 
                       required
                     />
-
                   </label>
 
 
                   <label>
-
                     Z Min (m)
 
                     <input
@@ -1341,12 +1248,10 @@ function App() {
 
                       required
                     />
-
                   </label>
 
 
                   <label>
-
                     Z Max (m)
 
                     <input
@@ -1366,23 +1271,66 @@ function App() {
 
                       required
                     />
-
                   </label>
 
                 </div>
 
 
                 <h3>
-                  Footprint Coordinates
+                  Property Footprint
                 </h3>
 
 
-                <div
-                  className="form-grid"
+                <button
+                  type="button"
+
+                  className="reset-button"
+
+                  onClick={
+                    startFootprintPicking
+                  }
+
+                  style={{
+                    marginBottom:
+                      "16px",
+
+                    borderColor:
+                      "#176544",
+
+                    color:
+                      "#176544",
+
+                    fontWeight:
+                      "700",
+                  }}
                 >
+                  📍 Pick Footprint on 3D Map
+                </button>
+
+
+                <div
+                  style={{
+                    marginBottom:
+                      "14px",
+
+                    fontSize:
+                      "11px",
+
+                    lineHeight:
+                      "1.5",
+
+                    color:
+                      "#66716c",
+                  }}
+                >
+                  You can pick two opposite corners on the map,
+                  or enter the coordinates manually below.
+                </div>
+
+
+                <div className="form-grid">
 
                   <label>
-
                     Min Longitude
 
                     <input
@@ -1402,12 +1350,10 @@ function App() {
 
                       required
                     />
-
                   </label>
 
 
                   <label>
-
                     Min Latitude
 
                     <input
@@ -1427,12 +1373,10 @@ function App() {
 
                       required
                     />
-
                   </label>
 
 
                   <label>
-
                     Max Longitude
 
                     <input
@@ -1452,12 +1396,10 @@ function App() {
 
                       required
                     />
-
                   </label>
 
 
                   <label>
-
                     Max Latitude
 
                     <input
@@ -1477,7 +1419,6 @@ function App() {
 
                       required
                     />
-
                   </label>
 
                 </div>
@@ -1485,13 +1426,8 @@ function App() {
 
                 {
                   createMessage && (
-
-                    <div
-                      className="create-message"
-                    >
-                      {
-                        createMessage
-                      }
+                    <div className="create-message">
+                      {createMessage}
                     </div>
                   )
                 }
@@ -1509,9 +1445,7 @@ function App() {
 
                   {
                     isCreating
-
                       ? "Creating..."
-
                       : "Generate & Add Property"
                   }
 
@@ -1534,27 +1468,15 @@ function InfoRow({
   label,
   value,
 }) {
-
   return (
+    <div className="info-row">
 
-    <div
-      className="info-row"
-    >
-
-      <span
-        className="info-label"
-      >
-        {
-          label
-        }
+      <span className="info-label">
+        {label}
       </span>
 
-      <span
-        className="info-value"
-      >
-        {
-          value ?? "—"
-        }
+      <span className="info-value">
+        {value ?? "—"}
       </span>
 
     </div>
