@@ -4,13 +4,12 @@ import json
 import psycopg
 
 from dotenv import load_dotenv
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 
 # ==========================================
-# LOAD ENVIRONMENT VARIABLES
+# ENVIRONMENT VARIABLES
 # ==========================================
 
 load_dotenv()
@@ -26,19 +25,22 @@ DB_CONFIG = {
 
 
 # ==========================================
-# FASTAPI APP
+# FASTAPI APPLICATION
 # ==========================================
 
 app = FastAPI(
     title="Bhumi3D API",
     description=(
-        "Backend API for the Bhumi3D "
-        "3D ULPIN and Vertical Property "
-        "Mapping System"
+        "Backend API for Bhumi3D - "
+        "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="0.3.0",
+    version="0.4.0",
 )
 
+
+# ==========================================
+# CORS
+# ==========================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +54,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ==========================================
 # DATABASE CONNECTION
@@ -75,11 +78,12 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
+        "version": "0.4.0",
     }
 
 
 # ==========================================
-# DATABASE HEALTH CHECK
+# DATABASE HEALTH
 # ==========================================
 
 @app.get("/health/database")
@@ -95,16 +99,13 @@ def database_health():
                     "SELECT PostGIS_Version();"
                 )
 
-                postgis_version = (
-                    cursor.fetchone()[0]
-                )
+                version = cursor.fetchone()[0]
 
 
         return {
             "status": "connected",
             "database": "bhumi3d",
-            "postgis_version":
-                postgis_version,
+            "postgis_version": version,
         }
 
 
@@ -112,7 +113,6 @@ def database_health():
 
         raise HTTPException(
             status_code=500,
-
             detail=f"Database error: {error}",
         )
 
@@ -150,39 +150,31 @@ def get_properties():
             rows = cursor.fetchall()
 
 
-    results = []
+    properties = []
 
 
     for row in rows:
 
-        results.append(
+        properties.append(
             {
                 "type": row[0],
-
                 "parent_ulpin": row[1],
-
                 "property_id": row[2],
-
                 "building": row[3],
-
                 "floor": row[4],
-
                 "unit": row[5],
-
                 "z_min": row[6],
-
                 "z_max": row[7],
-
                 "validation": row[8],
             }
         )
 
 
-    return results
+    return properties
 
 
 # ==========================================
-# GET PROPERTY BY UNIT
+# GET ONE PROPERTY
 # ==========================================
 
 @app.get("/properties/{unit}")
@@ -212,7 +204,6 @@ def get_property(unit: str):
 
                 LIMIT 1;
                 """,
-
                 (unit,),
             )
 
@@ -223,40 +214,32 @@ def get_property(unit: str):
 
         raise HTTPException(
             status_code=404,
-
             detail="Property not found",
         )
 
 
     return {
         "type": row[0],
-
         "parent_ulpin": row[1],
-
         "property_id": row[2],
-
         "building": row[3],
-
         "floor": row[4],
-
         "unit": row[5],
-
         "z_min": row[6],
-
         "z_max": row[7],
-
         "validation": row[8],
     }
 
 
 # ==========================================
-# SEARCH
+# SEARCH PROPERTIES
 # ==========================================
 
 @app.get("/search")
 def search_properties(q: str):
 
     search_value = f"%{q}%"
+
 
     with get_connection() as connection:
 
@@ -288,7 +271,6 @@ def search_properties(q: str):
 
                 ORDER BY id;
                 """,
-
                 (
                     search_value,
                     search_value,
@@ -308,21 +290,13 @@ def search_properties(q: str):
         results.append(
             {
                 "type": row[0],
-
                 "parent_ulpin": row[1],
-
                 "property_id": row[2],
-
                 "building": row[3],
-
                 "floor": row[4],
-
                 "unit": row[5],
-
                 "z_min": row[6],
-
                 "z_max": row[7],
-
                 "validation": row[8],
             }
         )
@@ -330,13 +304,13 @@ def search_properties(q: str):
 
     return {
         "found": len(results) > 0,
-
         "count": len(results),
-
         "results": results,
     }
-    # ==========================================
-# GET COMPLETE 3D SCENE
+
+
+# ==========================================
+# COMPLETE POSTGIS SCENE
 # ==========================================
 
 @app.get("/scene")
@@ -346,9 +320,9 @@ def get_scene():
 
         with connection.cursor() as cursor:
 
-            # ------------------------------
-            # GET PARCELS
-            # ------------------------------
+            # --------------------------------
+            # PARCELS
+            # --------------------------------
 
             cursor.execute(
                 """
@@ -368,23 +342,25 @@ def get_scene():
 
             parcels = []
 
+
             for row in parcel_rows:
 
                 parcels.append(
                     {
                         "ulpin": row[0],
-
                         "name": row[1],
-
-                        "geometry":
-                            json.loads(row[2]),
+                        "geometry": (
+                            json.loads(row[2])
+                            if row[2]
+                            else None
+                        ),
                     }
                 )
 
 
-            # ------------------------------
-            # GET 3D PROPERTY UNITS
-            # ------------------------------
+            # --------------------------------
+            # PROPERTIES
+            # --------------------------------
 
             cursor.execute(
                 """
@@ -411,46 +387,242 @@ def get_scene():
 
             properties = []
 
+
             for row in property_rows:
 
                 properties.append(
                     {
                         "type": row[0],
-
                         "parent_ulpin": row[1],
-
                         "property_id": row[2],
-
                         "building": row[3],
-
                         "floor": row[4],
-
                         "unit": row[5],
-
                         "z_min": row[6],
-
                         "z_max": row[7],
-
                         "validation": row[8],
-
-                        "geometry":
+                        "geometry": (
                             json.loads(row[9])
                             if row[9]
-                            else None,
+                            else None
+                        ),
                     }
                 )
 
 
     return {
-        "parcel_count":
-            len(parcels),
+        "parcel_count": len(parcels),
+        "property_count": len(properties),
+        "parcels": parcels,
+        "properties": properties,
+    }
 
-        "property_count":
-            len(properties),
 
-        "parcels":
-            parcels,
+# ==========================================
+# POSTGIS 3D TOPOLOGY VALIDATION
+# ==========================================
 
-        "properties":
-            properties,
+@app.get("/validate/topology")
+def validate_topology():
+
+    """
+    Detect spatial conflicts using:
+
+    1. 2D footprint intersection in PostGIS
+    2. Vertical Z-range intersection
+    3. Real overlap area in square metres
+    4. 3D overlap volume in cubic metres
+    """
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    a.id,
+                    a.property_type,
+                    a.property_id,
+                    a.unit,
+
+                    b.id,
+                    b.property_type,
+                    b.property_id,
+                    b.unit,
+
+                    ST_Area(
+                        ST_Intersection(
+                            a.footprint,
+                            b.footprint
+                        )::geography
+                    ) AS overlap_area_m2,
+
+                    (
+                        LEAST(
+                            a.z_max,
+                            b.z_max
+                        )
+                        -
+                        GREATEST(
+                            a.z_min,
+                            b.z_min
+                        )
+                    ) AS overlap_height_m
+
+                FROM properties AS a
+
+                JOIN properties AS b
+                    ON a.id < b.id
+
+                WHERE
+                    a.footprint IS NOT NULL
+
+                    AND b.footprint IS NOT NULL
+
+                    AND ST_Intersects(
+                        a.footprint,
+                        b.footprint
+                    )
+
+                    AND GREATEST(
+                        a.z_min,
+                        b.z_min
+                    )
+                    <
+                    LEAST(
+                        a.z_max,
+                        b.z_max
+                    )
+
+                    AND ST_Area(
+                        ST_Intersection(
+                            a.footprint,
+                            b.footprint
+                        )::geography
+                    ) > 0.01
+
+                ORDER BY
+                    a.id,
+                    b.id;
+                """
+            )
+
+
+            rows = cursor.fetchall()
+
+
+    conflicts = []
+
+
+    for row in rows:
+
+        type_a = row[1]
+        type_b = row[5]
+
+        unit_a = row[3]
+        unit_b = row[7]
+
+        overlap_area = float(
+            row[8]
+        )
+
+        overlap_height = float(
+            row[9]
+        )
+
+        overlap_volume = (
+            overlap_area *
+            overlap_height
+        )
+
+
+        # ----------------------------------
+        # CLASSIFY CONFLICT
+        # ----------------------------------
+
+        if (
+            type_a == "Apartment"
+            and
+            type_b == "Apartment"
+        ):
+
+            conflict_type = (
+                "3D Ownership Volume Overlap"
+            )
+
+
+        elif (
+            {
+                type_a,
+                type_b,
+            }
+            ==
+            {
+                "Basement Parking",
+                "Underground Utility",
+            }
+        ):
+
+            conflict_type = (
+                "Underground Infrastructure Collision"
+            )
+
+
+        else:
+
+            conflict_type = (
+                "3D Spatial Conflict"
+            )
+
+
+        conflicts.append(
+            {
+                "type": conflict_type,
+
+                "object_a": {
+                    "type": type_a,
+                    "unit": unit_a,
+                    "property_id": row[2],
+                },
+
+                "object_b": {
+                    "type": type_b,
+                    "unit": unit_b,
+                    "property_id": row[6],
+                },
+
+                "overlap_area_m2": round(
+                    overlap_area,
+                    2,
+                ),
+
+                "overlap_height_m": round(
+                    overlap_height,
+                    2,
+                ),
+
+                "overlap_volume_m3": round(
+                    overlap_volume,
+                    2,
+                ),
+            }
+        )
+
+
+    return {
+        "valid": len(conflicts) == 0,
+
+        "engine": "PostGIS",
+
+        "method": (
+            "2D footprint intersection "
+            "+ vertical Z-range intersection"
+        ),
+
+        "conflict_count": len(
+            conflicts
+        ),
+
+        "conflicts": conflicts,
     }

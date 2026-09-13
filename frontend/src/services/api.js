@@ -27,3 +27,18 @@ export async function getScene() {
 
   return await response.json();
 }
+
+
+export async function validateTopology() {
+  const response = await fetch(
+    `${API_BASE_URL}/validate/topology`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "PostGIS topology validation failed"
+    );
+  }
+
+  return await response.json();
+}
