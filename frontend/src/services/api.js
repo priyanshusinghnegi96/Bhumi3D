@@ -7,14 +7,23 @@ export async function getPropertyByUnit(unit) {
   );
 
   if (!response.ok) {
-    throw new Error("Backend request failed");
+    throw new Error("Property request failed");
   }
 
-  const data = await response.json();
+  return await response.json();
+}
 
-  if (data.error) {
-    return null;
+
+export async function getScene() {
+  const response = await fetch(
+    `${API_BASE_URL}/scene`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "Could not load Bhumi3D scene"
+    );
   }
 
-  return data;
+  return await response.json();
 }

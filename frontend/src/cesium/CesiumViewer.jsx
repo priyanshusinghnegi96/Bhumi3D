@@ -7,11 +7,16 @@ import {
   Viewer,
   Cartesian3,
   Color,
+  PolygonHierarchy,
   HeadingPitchRange,
   Math as CesiumMath,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
 } from "cesium";
+
+import {
+  getScene,
+} from "../services/api";
 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
@@ -30,134 +35,345 @@ function CesiumViewer({
   onValidationResult,
 }) {
 
-  const cesiumContainer = useRef(null);
+  const cesiumContainer =
+    useRef(null);
 
-  const viewerRef = useRef(null);
+  const viewerRef =
+    useRef(null);
 
-  const spatialObjectsRef = useRef([]);
+  const spatialObjectsRef =
+    useRef([]);
 
-  const layerEntitiesRef = useRef({
-    parcels: [],
-    buildings: [],
-    apartments: [],
-    parking: [],
-    utilities: [],
-  });
+  const layerEntitiesRef =
+    useRef({
+      parcels: [],
+      buildings: [],
+      apartments: [],
+      parking: [],
+      utilities: [],
+    });
 
-  const clickHandlerRef = useRef(null);
+  const selectedEntityRef =
+    useRef(null);
 
-  const selectedEntityRef = useRef(null);
+  const clickHandlerRef =
+    useRef(null);
 
 
-  // ==========================================
-  // GET INFORMATION FROM CESIUM ENTITY
-  // ==========================================
+  // Keep latest callbacks available
+  // without rebuilding Cesium.
 
-  function getEntityData(entity) {
+  const onSelectRef =
+    useRef(onSelect);
+
+  const onSearchResultRef =
+    useRef(onSearchResult);
+
+  const onValidationResultRef =
+    useRef(onValidationResult);
+
+
+  useEffect(() => {
+    onSelectRef.current =
+      onSelect;
+  }, [onSelect]);
+
+
+  useEffect(() => {
+    onSearchResultRef.current =
+      onSearchResult;
+  }, [onSearchResult]);
+
+
+  useEffect(() => {
+    onValidationResultRef.current =
+      onValidationResult;
+  }, [onValidationResult]);
+
+
+  // =========================================
+  // GEOJSON → CESIUM POSITIONS
+  // =========================================
+
+  function geometryToPositions(
+    geometry
+  ) {
 
     if (
-      !viewerRef.current ||
-      !entity ||
-      !entity.properties
+      !geometry ||
+      geometry.type !== "Polygon"
     ) {
-      return null;
+      return [];
     }
 
-    const time =
-      viewerRef.current.clock.currentTime;
+    let ring =
+      geometry.coordinates[0];
+
+
+    // GeoJSON polygons usually repeat
+    // the first coordinate at the end.
+    // Cesium does not need the duplicate.
+
+    if (
+      ring.length > 1 &&
+      ring[0][0] ===
+        ring[ring.length - 1][0] &&
+      ring[0][1] ===
+        ring[ring.length - 1][1]
+    ) {
+
+      ring =
+        ring.slice(
+          0,
+          -1
+        );
+    }
+
+
+    return ring.map(
+      ([longitude, latitude]) =>
+        Cartesian3.fromDegrees(
+          longitude,
+          latitude
+        )
+    );
+  }
+
+
+  // =========================================
+  // GEOMETRY BOUNDS
+  // =========================================
+
+  function getGeometryBounds(
+    geometry
+  ) {
+
+    const coordinates =
+      geometry.coordinates[0];
+
+
+    const longitudes =
+      coordinates.map(
+        (coordinate) =>
+          coordinate[0]
+      );
+
+
+    const latitudes =
+      coordinates.map(
+        (coordinate) =>
+          coordinate[1]
+      );
+
 
     return {
-      type:
-        entity.properties.type
-          ?.getValue(time) ?? "—",
 
-      parentUlpIn:
-        entity.properties.parentUlpIn
-          ?.getValue(time) ?? "—",
+      minLon:
+        Math.min(
+          ...longitudes
+        ),
 
-      propertyId:
-        entity.properties.propertyId
-          ?.getValue(time) ?? "—",
+      maxLon:
+        Math.max(
+          ...longitudes
+        ),
 
-      building:
-        entity.properties.building
-          ?.getValue(time) ?? "—",
+      minLat:
+        Math.min(
+          ...latitudes
+        ),
 
-      floor:
-        entity.properties.floor
-          ?.getValue(time) ?? "—",
-
-      unit:
-        entity.properties.unit
-          ?.getValue(time) ?? "—",
-
-      verticalRange:
-        entity.properties.verticalRange
-          ?.getValue(time) ?? "—",
-
-      validation:
-        entity.properties.validation
-          ?.getValue(time) ?? "Not checked",
+      maxLat:
+        Math.max(
+          ...latitudes
+        ),
     };
   }
 
 
-  // ==========================================
-  // SIMPLE 3D COLLISION CALCULATION
-  // ==========================================
+  // =========================================
+  // ENTITY INFORMATION
+  // =========================================
 
-  function calculateOverlap(a, b) {
+  function getEntityData(
+    entity
+  ) {
+
+    const viewer =
+      viewerRef.current;
+
+
+    if (
+      !viewer ||
+      !entity ||
+      !entity.properties
+    ) {
+
+      return null;
+    }
+
+
+    const time =
+      viewer.clock.currentTime;
+
+
+    return {
+
+      type:
+        entity.properties.type
+          ?.getValue(time)
+          ?? "—",
+
+      parentUlpIn:
+        entity.properties.parentUlpIn
+          ?.getValue(time)
+          ?? "—",
+
+      propertyId:
+        entity.properties.propertyId
+          ?.getValue(time)
+          ?? "—",
+
+      building:
+        entity.properties.building
+          ?.getValue(time)
+          ?? "—",
+
+      floor:
+        entity.properties.floor
+          ?.getValue(time)
+          ?? "—",
+
+      unit:
+        entity.properties.unit
+          ?.getValue(time)
+          ?? "—",
+
+      verticalRange:
+        entity.properties.verticalRange
+          ?.getValue(time)
+          ?? "—",
+
+      validation:
+        entity.properties.validation
+          ?.getValue(time)
+          ?? "Not checked",
+    };
+  }
+
+
+  function setValidation(
+    entity,
+    value
+  ) {
+
+    const property =
+      entity?.properties
+        ?.validation;
+
+
+    if (
+      property &&
+      property.setValue
+    ) {
+
+      property.setValue(
+        value
+      );
+    }
+  }
+
+
+  // =========================================
+  // AABB 3D COLLISION
+  // =========================================
+
+  function calculateOverlap(
+    a,
+    b
+  ) {
 
     const aMinX =
-      a.centerX - a.width / 2;
+      a.centerX -
+      a.width / 2;
 
     const aMaxX =
-      a.centerX + a.width / 2;
+      a.centerX +
+      a.width / 2;
+
 
     const bMinX =
-      b.centerX - b.width / 2;
+      b.centerX -
+      b.width / 2;
 
     const bMaxX =
-      b.centerX + b.width / 2;
+      b.centerX +
+      b.width / 2;
 
 
     const aMinY =
-      a.centerY - a.depth / 2;
+      a.centerY -
+      a.depth / 2;
 
     const aMaxY =
-      a.centerY + a.depth / 2;
+      a.centerY +
+      a.depth / 2;
+
 
     const bMinY =
-      b.centerY - b.depth / 2;
+      b.centerY -
+      b.depth / 2;
 
     const bMaxY =
-      b.centerY + b.depth / 2;
+      b.centerY +
+      b.depth / 2;
 
 
     const aMinZ =
-      a.centerZ - a.height / 2;
+      a.zMin;
 
     const aMaxZ =
-      a.centerZ + a.height / 2;
+      a.zMax;
+
 
     const bMinZ =
-      b.centerZ - b.height / 2;
+      b.zMin;
 
     const bMaxZ =
-      b.centerZ + b.height / 2;
+      b.zMax;
 
 
     const overlapX =
-      Math.min(aMaxX, bMaxX) -
-      Math.max(aMinX, bMinX);
+      Math.min(
+        aMaxX,
+        bMaxX
+      ) -
+      Math.max(
+        aMinX,
+        bMinX
+      );
+
 
     const overlapY =
-      Math.min(aMaxY, bMaxY) -
-      Math.max(aMinY, bMinY);
+      Math.min(
+        aMaxY,
+        bMaxY
+      ) -
+      Math.max(
+        aMinY,
+        bMinY
+      );
+
 
     const overlapZ =
-      Math.min(aMaxZ, bMaxZ) -
-      Math.max(aMinZ, bMinZ);
+      Math.min(
+        aMaxZ,
+        bMaxZ
+      ) -
+      Math.max(
+        aMinZ,
+        bMinZ
+      );
 
 
     if (
@@ -173,25 +389,19 @@ function CesiumViewer({
       );
     }
 
+
     return 0;
   }
 
 
-  // ==========================================
-  // CREATE THE COMPLETE CESIUM SCENE
-  // ==========================================
+  // =========================================
+  // CREATE CESIUM + LOAD POSTGIS SCENE
+  // =========================================
 
   useEffect(() => {
 
-    spatialObjectsRef.current = [];
-
-    layerEntitiesRef.current = {
-      parcels: [],
-      buildings: [],
-      apartments: [],
-      parking: [],
-      utilities: [],
-    };
+    let cancelled =
+      false;
 
 
     const viewer =
@@ -202,23 +412,36 @@ function CesiumViewer({
 
           baseLayerPicker: false,
           geocoder: false,
+
           animation: false,
           timeline: false,
 
-          navigationHelpButton: false,
-          sceneModePicker: false,
-          homeButton: false,
+          navigationHelpButton:
+            false,
 
-          skyBox: false,
-          skyAtmosphere: false,
+          sceneModePicker:
+            false,
 
-          infoBox: false,
-          selectionIndicator: false,
+          homeButton:
+            false,
+
+          skyBox:
+            false,
+
+          skyAtmosphere:
+            false,
+
+          infoBox:
+            false,
+
+          selectionIndicator:
+            false,
         }
       );
 
 
-    viewerRef.current = viewer;
+    viewerRef.current =
+      viewer;
 
 
     viewer.scene.backgroundColor =
@@ -227,791 +450,674 @@ function CesiumViewer({
       );
 
 
-    const longitude = 77.209;
-    const latitude = 28.6139;
+    async function loadScene() {
 
-    const parentULPIN =
-      "ABC12345678901";
+      try {
 
+        const scene =
+          await getScene();
 
-    // ========================================
-    // CONVERT METRES INTO GPS OFFSET
-    // ========================================
-
-    function offsetPosition(
-      xMeters,
-      yMeters,
-      height
-    ) {
-
-      const latitudeOffset =
-        yMeters / 111320;
-
-
-      const longitudeOffset =
-        xMeters /
-        (
-          111320 *
-          Math.cos(
-            CesiumMath.toRadians(
-              latitude
-            )
-          )
-        );
-
-
-      return Cartesian3.fromDegrees(
-        longitude + longitudeOffset,
-        latitude + latitudeOffset,
-        height
-      );
-    }
-
-
-    // ========================================
-    // LAND PARCEL
-    // ========================================
-
-    const parcelEntity =
-      viewer.entities.add({
-
-        id: "parcel-001",
-
-        name:
-          "Land Parcel",
-
-        position:
-          offsetPosition(
-            0,
-            0,
-            0
-          ),
-
-        box: {
-
-          dimensions:
-            new Cartesian3(
-              80,
-              65,
-              1
-            ),
-
-          material:
-            Color.LIMEGREEN
-              .withAlpha(0.45),
-
-          outline: true,
-
-          outlineColor:
-            Color.DARKGREEN,
-        },
-
-        properties: {
-
-          type:
-            "Land Parcel",
-
-          parentUlpIn:
-            parentULPIN,
-
-          propertyId:
-            parentULPIN,
-
-          building:
-            "—",
-
-          floor:
-            "Surface",
-
-          unit:
-            "—",
-
-          verticalRange:
-            "Surface",
-
-          validation:
-            "Valid",
-        },
-      });
-
-
-    layerEntitiesRef.current.parcels.push(
-      parcelEntity
-    );
-
-
-    spatialObjectsRef.current.push({
-
-      id:
-        parentULPIN,
-
-      category:
-        "parcel",
-
-      entity:
-        parcelEntity,
-
-      searchTerms: [
-        parentULPIN,
-        "parcel",
-        "land parcel",
-      ],
-    });
-
-
-    // ========================================
-    // APARTMENT SETTINGS
-    // ========================================
-
-    const floorHeight = 7;
-
-    const apartmentWidth = 20;
-
-    const apartmentDepth = 15;
-
-    const apartmentHeight = 6.2;
-
-
-    const floorColors = [
-
-      Color.ROYALBLUE,
-
-      Color.DODGERBLUE,
-
-      Color.CORNFLOWERBLUE,
-
-      Color.STEELBLUE,
-
-      Color.LIGHTSTEELBLUE,
-    ];
-
-
-    const standardPositions = [
-
-      {
-        x: -10.5,
-        y: 8,
-      },
-
-      {
-        x: 10.5,
-        y: 8,
-      },
-
-      {
-        x: -10.5,
-        y: -8,
-      },
-
-      {
-        x: 10.5,
-        y: -8,
-      },
-    ];
-
-
-    // ========================================
-    // CREATE 5 FLOORS
-    // ========================================
-
-    for (
-      let floorIndex = 0;
-      floorIndex < 5;
-      floorIndex++
-    ) {
-
-      const floorNumber =
-        floorIndex + 1;
-
-
-      const floorString =
-        String(floorNumber)
-          .padStart(
-            2,
-            "0"
-          );
-
-
-      const zMin =
-        floorIndex *
-        floorHeight;
-
-
-      const zMax =
-        zMin +
-        floorHeight;
-
-
-      const centerHeight =
-        zMin +
-        floorHeight / 2 +
-        1;
-
-
-      // --------------------------------------
-      // FLOOR SLAB
-      // --------------------------------------
-
-      const slab =
-        viewer.entities.add({
-
-          id:
-            `slab-${floorNumber}`,
-
-          name:
-            `Floor ${floorNumber} Slab`,
-
-          position:
-            offsetPosition(
-              0,
-              0,
-              zMin + 1
-            ),
-
-          box: {
-
-            dimensions:
-              new Cartesian3(
-                45,
-                36,
-                0.3
-              ),
-
-            material:
-              Color.GRAY
-                .withAlpha(0.6),
-
-            outline: true,
-
-            outlineColor:
-              Color.WHITE,
-          },
-        });
-
-
-      layerEntitiesRef.current.buildings.push(
-        slab
-      );
-
-
-      // --------------------------------------
-      // FOUR APARTMENTS
-      // --------------------------------------
-
-      for (
-        let unitIndex = 0;
-        unitIndex < 4;
-        unitIndex++
-      ) {
-
-        const unitNumber =
-          `${floorNumber}${String(
-            unitIndex + 1
-          ).padStart(
-            2,
-            "0"
-          )}`;
-
-
-        let x =
-          standardPositions[
-            unitIndex
-          ].x;
-
-
-        const y =
-          standardPositions[
-            unitIndex
-          ].y;
-
-
-        // ====================================
-        // INTENTIONAL CONFLICT FOR SIH DEMO
-        // Apartment 404 overlaps 403
-        // ====================================
 
         if (
-          floorNumber === 4 &&
-          unitIndex === 3
+          cancelled
         ) {
-
-          x = 7;
+          return;
         }
 
 
-        const propertyId =
-          `${parentULPIN}-B01-L${floorString}-U${unitNumber}`;
+        spatialObjectsRef.current =
+          [];
 
 
-        const normalColor =
-          floorColors[
-            floorIndex
-          ].withAlpha(0.9);
+        layerEntitiesRef.current =
+          {
+            parcels: [],
+            buildings: [],
+            apartments: [],
+            parking: [],
+            utilities: [],
+          };
 
 
-        const entity =
-          viewer.entities.add({
+        // ---------------------------------
+        // Determine local coordinate origin
+        // ---------------------------------
 
-            id:
-              `unit-${unitNumber}`,
+        const parcel =
+          scene.parcels[0];
 
-            name:
-              `Apartment ${unitNumber}`,
 
-            position:
-              offsetPosition(
-                x,
-                y,
-                centerHeight
-              ),
+        const parcelBounds =
+          getGeometryBounds(
+            parcel.geometry
+          );
 
-            box: {
 
-              dimensions:
-                new Cartesian3(
-                  apartmentWidth,
-                  apartmentDepth,
-                  apartmentHeight
-                ),
+        const originLongitude =
+          (
+            parcelBounds.minLon +
+            parcelBounds.maxLon
+          ) / 2;
 
-              material:
-                normalColor,
 
-              outline: true,
+        const originLatitude =
+          (
+            parcelBounds.minLat +
+            parcelBounds.maxLat
+          ) / 2;
 
-              outlineColor:
-                Color.WHITE,
-            },
 
-            properties: {
+        const metresPerDegreeLatitude =
+          111320;
 
-              type:
-                "Apartment",
 
-              parentUlpIn:
-                parentULPIN,
+        const metresPerDegreeLongitude =
+          111320 *
+          Math.cos(
+            CesiumMath.toRadians(
+              originLatitude
+            )
+          );
+
+
+        function createMetrics(
+          geometry,
+          zMin,
+          zMax
+        ) {
+
+          const bounds =
+            getGeometryBounds(
+              geometry
+            );
+
+
+          const centerLongitude =
+            (
+              bounds.minLon +
+              bounds.maxLon
+            ) / 2;
+
+
+          const centerLatitude =
+            (
+              bounds.minLat +
+              bounds.maxLat
+            ) / 2;
+
+
+          return {
+
+            centerX:
+              (
+                centerLongitude -
+                originLongitude
+              ) *
+              metresPerDegreeLongitude,
+
+            centerY:
+              (
+                centerLatitude -
+                originLatitude
+              ) *
+              metresPerDegreeLatitude,
+
+            width:
+              (
+                bounds.maxLon -
+                bounds.minLon
+              ) *
+              metresPerDegreeLongitude,
+
+            depth:
+              (
+                bounds.maxLat -
+                bounds.minLat
+              ) *
+              metresPerDegreeLatitude,
+
+            zMin,
+
+            zMax,
+          };
+        }
+
+
+        // =================================
+        // PARCELS
+        // =================================
+
+        for (
+          const parcelRecord
+          of scene.parcels
+        ) {
+
+          const positions =
+            geometryToPositions(
+              parcelRecord.geometry
+            );
+
+
+          const entity =
+            viewer.entities.add({
+
+              id:
+                `parcel-${parcelRecord.ulpin}`,
+
+              name:
+                parcelRecord.name,
+
+              polygon: {
+
+                hierarchy:
+                  new PolygonHierarchy(
+                    positions
+                  ),
+
+                height:
+                  0,
+
+                extrudedHeight:
+                  0.5,
+
+                material:
+                  Color.LIMEGREEN
+                    .withAlpha(
+                      0.45
+                    ),
+
+                outline:
+                  true,
+
+                outlineColor:
+                  Color.DARKGREEN,
+              },
+
+              properties: {
+
+                type:
+                  "Land Parcel",
+
+                parentUlpIn:
+                  parcelRecord.ulpin,
+
+                propertyId:
+                  parcelRecord.ulpin,
+
+                building:
+                  "—",
+
+                floor:
+                  "Surface",
+
+                unit:
+                  "—",
+
+                verticalRange:
+                  "Surface",
+
+                validation:
+                  "Valid",
+              },
+            });
+
+
+          layerEntitiesRef
+            .current
+            .parcels
+            .push(
+              entity
+            );
+        }
+
+
+        // =================================
+        // PROPERTIES
+        // =================================
+
+        const floorColors = [
+
+          Color.ROYALBLUE,
+
+          Color.DODGERBLUE,
+
+          Color.CORNFLOWERBLUE,
+
+          Color.STEELBLUE,
+
+          Color.LIGHTSTEELBLUE,
+        ];
+
+
+        for (
+          const property
+          of scene.properties
+        ) {
+
+          if (
+            !property.geometry
+          ) {
+            continue;
+          }
+
+
+          const positions =
+            geometryToPositions(
+              property.geometry
+            );
+
+
+          let category =
+            "apartments";
+
+
+          let normalColor =
+            Color.ROYALBLUE
+              .withAlpha(0.9);
+
+
+          if (
+            property.type ===
+            "Apartment"
+          ) {
+
+            category =
+              "apartments";
+
+
+            const floorIndex =
+              Math.max(
+                0,
+                Math.min(
+                  4,
+                  parseInt(
+                    property.floor
+                  ) - 1
+                )
+              );
+
+
+            normalColor =
+              floorColors[
+                floorIndex
+              ]
+                .withAlpha(
+                  0.9
+                );
+          }
+
+
+          if (
+            property.type ===
+            "Basement Parking"
+          ) {
+
+            category =
+              "parking";
+
+
+            normalColor =
+              Color.ORANGE
+                .withAlpha(
+                  0.9
+                );
+          }
+
+
+          if (
+            property.type ===
+            "Underground Utility"
+          ) {
+
+            category =
+              "utilities";
+
+
+            normalColor =
+              Color.CYAN
+                .withAlpha(
+                  0.9
+                );
+          }
+
+
+          const entity =
+            viewer.entities.add({
+
+              id:
+                property.property_id,
+
+              name:
+                `${property.type} ${property.unit}`,
+
+              polygon: {
+
+                hierarchy:
+                  new PolygonHierarchy(
+                    positions
+                  ),
+
+                height:
+                  property.z_min,
+
+                extrudedHeight:
+                  property.z_max,
+
+                material:
+                  normalColor,
+
+                outline:
+                  true,
+
+                outlineColor:
+                  Color.WHITE,
+              },
+
+              properties: {
+
+                type:
+                  property.type,
+
+                parentUlpIn:
+                  property.parent_ulpin,
+
+                propertyId:
+                  property.property_id,
+
+                building:
+                  property.building
+                  ?? "—",
+
+                floor:
+                  property.floor,
+
+                unit:
+                  property.unit,
+
+                verticalRange:
+                  `${property.z_min}m – ${property.z_max}m`,
+
+                validation:
+                  property.validation,
+              },
+            });
+
+
+          layerEntitiesRef
+            .current[
+              category
+            ]
+            .push(
+              entity
+            );
+
+
+          const metrics =
+            createMetrics(
+              property.geometry,
+              property.z_min,
+              property.z_max
+            );
+
+
+          spatialObjectsRef
+            .current
+            .push({
+
+              id:
+                property.unit,
+
+              category:
+                category ===
+                "apartments"
+
+                  ? "apartment"
+
+                  : category ===
+                    "parking"
+
+                    ? "parking"
+
+                    : "utility",
+
+              entity,
+
+              normalColor,
 
               propertyId:
-                propertyId,
-
-              building:
-                "B01",
+                property.property_id,
 
               floor:
-                floorString,
+                property.floor,
 
-              unit:
-                unitNumber,
+              zMin:
+                property.z_min,
 
-              verticalRange:
-                `${zMin}m – ${zMax}m`,
+              zMax:
+                property.z_max,
 
-              validation:
-                "Not checked",
-            },
-          });
+              ...metrics,
+
+              searchTerms: [
+
+                property.unit,
+
+                property.property_id,
+
+                property.type,
+
+                `${property.type} ${property.unit}`,
+              ],
+            });
+        }
 
 
-        layerEntitiesRef.current.apartments.push(
-          entity
+        // =================================
+        // GENERATE FLOOR SLABS
+        // FROM DATABASE APARTMENTS
+        // =================================
+
+        const apartments =
+          scene.properties.filter(
+            (property) =>
+              property.type ===
+              "Apartment"
+          );
+
+
+        const floors =
+          [
+            ...new Set(
+              apartments.map(
+                (property) =>
+                  property.floor
+              )
+            ),
+          ];
+
+
+        for (
+          const floor
+          of floors
+        ) {
+
+          const floorProperties =
+            apartments.filter(
+              (property) =>
+                property.floor ===
+                floor
+            );
+
+
+          if (
+            floorProperties.length ===
+            0
+          ) {
+            continue;
+          }
+
+
+          const bounds =
+            floorProperties.map(
+              (property) =>
+                getGeometryBounds(
+                  property.geometry
+                )
+            );
+
+
+          const minLon =
+            Math.min(
+              ...bounds.map(
+                (value) =>
+                  value.minLon
+              )
+            );
+
+
+          const maxLon =
+            Math.max(
+              ...bounds.map(
+                (value) =>
+                  value.maxLon
+              )
+            );
+
+
+          const minLat =
+            Math.min(
+              ...bounds.map(
+                (value) =>
+                  value.minLat
+              )
+            );
+
+
+          const maxLat =
+            Math.max(
+              ...bounds.map(
+                (value) =>
+                  value.maxLat
+              )
+            );
+
+
+          const positions =
+            [
+              Cartesian3.fromDegrees(
+                minLon,
+                minLat
+              ),
+
+              Cartesian3.fromDegrees(
+                maxLon,
+                minLat
+              ),
+
+              Cartesian3.fromDegrees(
+                maxLon,
+                maxLat
+              ),
+
+              Cartesian3.fromDegrees(
+                minLon,
+                maxLat
+              ),
+            ];
+
+
+          const zMin =
+            floorProperties[0]
+              .z_min;
+
+
+          const slab =
+            viewer.entities.add({
+
+              id:
+                `floor-slab-${floor}`,
+
+              name:
+                `Floor ${floor} Slab`,
+
+              polygon: {
+
+                hierarchy:
+                  new PolygonHierarchy(
+                    positions
+                  ),
+
+                height:
+                  zMin + 0.05,
+
+                extrudedHeight:
+                  zMin + 0.25,
+
+                material:
+                  Color.GRAY
+                    .withAlpha(
+                      0.55
+                    ),
+
+                outline:
+                  true,
+
+                outlineColor:
+                  Color.WHITE,
+              },
+            });
+
+
+          layerEntitiesRef
+            .current
+            .buildings
+            .push(
+              slab
+            );
+        }
+
+
+        // =================================
+        // CAMERA
+        // =================================
+
+        viewer.zoomTo(
+
+          viewer.entities,
+
+          new HeadingPitchRange(
+
+            CesiumMath.toRadians(
+              35
+            ),
+
+            CesiumMath.toRadians(
+              -20
+            ),
+
+            220
+          )
         );
+      }
 
+      catch (
+        error
+      ) {
 
-        spatialObjectsRef.current.push({
-
-          id:
-            unitNumber,
-
-          category:
-            "apartment",
-
-          entity,
-
-          normalColor,
-
-          propertyId,
-
-          floor:
-            floorString,
-
-          centerX:
-            x,
-
-          centerY:
-            y,
-
-          centerZ:
-            centerHeight,
-
-          width:
-            apartmentWidth,
-
-          depth:
-            apartmentDepth,
-
-          height:
-            apartmentHeight,
-
-          zMin,
-
-          zMax,
-
-          searchTerms: [
-
-            unitNumber,
-
-            `Apartment ${unitNumber}`,
-
-            propertyId,
-          ],
-        });
+        console.error(
+          "Could not load scene:",
+          error
+        );
       }
     }
 
 
-    // ========================================
-    // BASEMENT PARKING
-    // ========================================
+    loadScene();
 
-    const parkingWidth = 20;
 
-    const parkingDepth = 15;
-
-    const parkingHeight = 5;
-
-
-    const parkingPositions = [
-
-      {
-        x: -10.5,
-        y: 8,
-      },
-
-      {
-        x: 10.5,
-        y: 8,
-      },
-
-      {
-        x: -10.5,
-        y: -8,
-      },
-
-      {
-        x: 10.5,
-        y: -8,
-      },
-    ];
-
-
-    for (
-      let i = 0;
-      i < 4;
-      i++
-    ) {
-
-      const parkingNumber =
-        `P0${i + 1}`;
-
-
-      const position =
-        parkingPositions[i];
-
-
-      const propertyId =
-        `${parentULPIN}-B01-B01-${parkingNumber}`;
-
-
-      const normalColor =
-        Color.ORANGE
-          .withAlpha(0.9);
-
-
-      const entity =
-        viewer.entities.add({
-
-          id:
-            `parking-${parkingNumber}`,
-
-          name:
-            `Parking ${parkingNumber}`,
-
-          position:
-            offsetPosition(
-              position.x,
-              position.y,
-              -3.5
-            ),
-
-          box: {
-
-            dimensions:
-              new Cartesian3(
-                parkingWidth,
-                parkingDepth,
-                parkingHeight
-              ),
-
-            material:
-              normalColor,
-
-            outline: true,
-
-            outlineColor:
-              Color.WHITE,
-          },
-
-          properties: {
-
-            type:
-              "Basement Parking",
-
-            parentUlpIn:
-              parentULPIN,
-
-            propertyId:
-              propertyId,
-
-            building:
-              "B01",
-
-            floor:
-              "Basement 1",
-
-            unit:
-              parkingNumber,
-
-            verticalRange:
-              "-6m – -1m",
-
-            validation:
-              "Not checked",
-          },
-        });
-
-
-      layerEntitiesRef.current.parking.push(
-        entity
-      );
-
-
-      spatialObjectsRef.current.push({
-
-        id:
-          parkingNumber,
-
-        category:
-          "parking",
-
-        entity,
-
-        normalColor,
-
-        propertyId,
-
-        floor:
-          "Basement 1",
-
-        centerX:
-          position.x,
-
-        centerY:
-          position.y,
-
-        centerZ:
-          -3.5,
-
-        width:
-          parkingWidth,
-
-        depth:
-          parkingDepth,
-
-        height:
-          parkingHeight,
-
-        zMin:
-          -6,
-
-        zMax:
-          -1,
-
-        searchTerms: [
-
-          parkingNumber,
-
-          `Parking ${parkingNumber}`,
-
-          propertyId,
-        ],
-      });
-    }
-
-
-    // ========================================
-    // UNDERGROUND WATER UTILITY
-    // ========================================
-
-    const utilityPropertyId =
-      `${parentULPIN}-UG-WATER-001`;
-
-
-    const utilityColor =
-      Color.CYAN
-        .withAlpha(0.9);
-
-
-    const utilityEntity =
-      viewer.entities.add({
-
-        id:
-          "utility-water-001",
-
-        name:
-          "Water Utility W-001",
-
-        position:
-          offsetPosition(
-            -10.5,
-            -8,
-            -5
-          ),
-
-        box: {
-
-          dimensions:
-            new Cartesian3(
-              18,
-              4,
-              2
-            ),
-
-          material:
-            utilityColor,
-
-          outline: true,
-
-          outlineColor:
-            Color.WHITE,
-        },
-
-        properties: {
-
-          type:
-            "Underground Utility",
-
-          parentUlpIn:
-            parentULPIN,
-
-          propertyId:
-            utilityPropertyId,
-
-          building:
-            "—",
-
-          floor:
-            "Underground",
-
-          unit:
-            "W-001",
-
-          verticalRange:
-            "-6m – -4m",
-
-          validation:
-            "Not checked",
-        },
-      });
-
-
-    layerEntitiesRef.current.utilities.push(
-      utilityEntity
-    );
-
-
-    spatialObjectsRef.current.push({
-
-      id:
-        "W-001",
-
-      category:
-        "utility",
-
-      entity:
-        utilityEntity,
-
-      normalColor:
-        utilityColor,
-
-      propertyId:
-        utilityPropertyId,
-
-      floor:
-        "Underground",
-
-      centerX:
-        -10.5,
-
-      centerY:
-        -8,
-
-      centerZ:
-        -5,
-
-      width:
-        18,
-
-      depth:
-        4,
-
-      height:
-        2,
-
-      zMin:
-        -6,
-
-      zMax:
-        -4,
-
-      searchTerms: [
-
-        "W-001",
-
-        "water",
-
-        "water utility",
-
-        utilityPropertyId,
-      ],
-    });
-
-
-    // ========================================
-    // INITIAL CAMERA
-    // ========================================
-
-    viewer.zoomTo(
-
-      viewer.entities,
-
-      new HeadingPitchRange(
-
-        CesiumMath.toRadians(
-          35
-        ),
-
-        CesiumMath.toRadians(
-          -18
-        ),
-
-        210
-      )
-    );
-
-
-    // ========================================
+    // =====================================
     // CLICK HANDLER
-    // ========================================
+    // =====================================
 
     const handler =
       new ScreenSpaceEventHandler(
@@ -1027,34 +1133,32 @@ function CesiumViewer({
 
       (movement) => {
 
-        const pickedObject =
+        const picked =
           viewer.scene.pick(
             movement.position
           );
 
 
         if (
-          !pickedObject ||
-          !pickedObject.id
+          !picked ||
+          !picked.id
         ) {
 
           return;
         }
 
 
-        const entity =
-          pickedObject.id;
-
-
         const data =
           getEntityData(
-            entity
+            picked.id
           );
 
 
-        if (data) {
+        if (
+          data
+        ) {
 
-          onSelect(
+          onSelectRef.current(
             data
           );
         }
@@ -1065,11 +1169,11 @@ function CesiumViewer({
     );
 
 
-    // ========================================
-    // CLEANUP
-    // ========================================
-
     return () => {
+
+      cancelled =
+        true;
+
 
       if (
         clickHandlerRef.current &&
@@ -1090,25 +1194,26 @@ function CesiumViewer({
       }
 
 
-      viewerRef.current = null;
+      viewerRef.current =
+        null;
     };
 
   }, []);
 
 
-  // ==========================================
-  // LAYER CHECKBOXES
-  // ==========================================
+  // =========================================
+  // LAYER CONTROLS
+  // =========================================
 
   useEffect(() => {
 
-    const layerRefs =
+    const groups =
       layerEntitiesRef.current;
 
 
     for (
       const entity
-      of layerRefs.parcels
+      of groups.parcels
     ) {
 
       entity.show =
@@ -1118,7 +1223,7 @@ function CesiumViewer({
 
     for (
       const entity
-      of layerRefs.buildings
+      of groups.buildings
     ) {
 
       entity.show =
@@ -1128,7 +1233,7 @@ function CesiumViewer({
 
     for (
       const entity
-      of layerRefs.apartments
+      of groups.apartments
     ) {
 
       entity.show =
@@ -1138,7 +1243,7 @@ function CesiumViewer({
 
     for (
       const entity
-      of layerRefs.parking
+      of groups.parking
     ) {
 
       entity.show =
@@ -1148,7 +1253,7 @@ function CesiumViewer({
 
     for (
       const entity
-      of layerRefs.utilities
+      of groups.utilities
     ) {
 
       entity.show =
@@ -1158,9 +1263,9 @@ function CesiumViewer({
   }, [layers]);
 
 
-  // ==========================================
-  // SEARCH + STRONG CAMERA ZOOM
-  // ==========================================
+  // =========================================
+  // SEARCH
+  // =========================================
 
   useEffect(() => {
 
@@ -1173,67 +1278,61 @@ function CesiumViewer({
     }
 
 
-    const viewer =
-      viewerRef.current;
-
-
     const query =
       searchText
         .trim()
         .toLowerCase();
 
 
-    if (!query) {
+    if (
+      !query
+    ) {
 
       return;
     }
 
 
-    // ----------------------------------------
-    // FIND EXACT UNIT FIRST
-    // ----------------------------------------
-
     let result =
-      spatialObjectsRef.current.find(
-
-        (object) =>
-          object.id
-            .toLowerCase() ===
-          query
-      );
-
-
-    // ----------------------------------------
-    // THEN SEARCH PROPERTY ID / NAME
-    // ----------------------------------------
-
-    if (!result) {
-
-      result =
-        spatialObjectsRef.current.find(
+      spatialObjectsRef
+        .current
+        .find(
 
           (object) =>
-            object.searchTerms
-              ?.some(
-
-                (term) =>
-                  term
-                    .toLowerCase()
-                    .includes(
-                      query
-                    )
-              )
+            object.id
+              .toLowerCase() ===
+            query
         );
+
+
+    if (
+      !result
+    ) {
+
+      result =
+        spatialObjectsRef
+          .current
+          .find(
+
+            (object) =>
+              object.searchTerms
+                .some(
+
+                  (term) =>
+                    term
+                      .toLowerCase()
+                      .includes(
+                        query
+                      )
+                )
+          );
     }
 
 
-    // ----------------------------------------
-    // NOTHING FOUND
-    // ----------------------------------------
+    if (
+      !result
+    ) {
 
-    if (!result) {
-
-      onSearchResult({
+      onSearchResultRef.current({
         found: false,
       });
 
@@ -1241,26 +1340,26 @@ function CesiumViewer({
     }
 
 
-    // Make searched object visible
-
-    result.entity.show =
-      true;
-
-
-    // ----------------------------------------
-    // REMOVE OLD SEARCH HIGHLIGHT
-    // ----------------------------------------
+    // Restore previous search highlight
 
     if (
-      selectedEntityRef.current &&
       selectedEntityRef.current
-        .normalColor
     ) {
 
-      selectedEntityRef.current
-        .entity.box.material =
-          selectedEntityRef.current
-            .normalColor;
+      const previous =
+        selectedEntityRef.current;
+
+
+      previous.entity
+        .polygon
+        .material =
+          previous.normalColor;
+
+
+      previous.entity
+        .polygon
+        .outlineColor =
+          Color.WHITE;
     }
 
 
@@ -1268,34 +1367,34 @@ function CesiumViewer({
       result;
 
 
-    // ----------------------------------------
-    // HIGHLIGHT SEARCHED OBJECT
-    // ----------------------------------------
+    // Highlight searched property
 
-    if (
-      result.entity.box
-    ) {
-
-      result.entity.box.material =
+    result.entity
+      .polygon
+      .material =
         Color.YELLOW
-          .withAlpha(0.95);
+          .withAlpha(
+            0.95
+          );
 
 
-      result.entity.box.outlineColor =
+    result.entity
+      .polygon
+      .outlineColor =
         Color.BLACK;
-    }
 
 
-    // ----------------------------------------
-    // CAMERA FLIES CLOSE TO RESULT
-    // ----------------------------------------
+    result.entity.show =
+      true;
 
-    viewer.flyTo(
+
+    viewerRef.current.flyTo(
 
       result.entity,
 
       {
-        duration: 1.5,
+        duration:
+          1.4,
 
         offset:
           new HeadingPitchRange(
@@ -1305,18 +1404,14 @@ function CesiumViewer({
             ),
 
             CesiumMath.toRadians(
-              -25
+              -30
             ),
 
-            28
+            35
           ),
       }
     );
 
-
-    // ----------------------------------------
-    // UPDATE RIGHT PANEL
-    // ----------------------------------------
 
     const data =
       getEntityData(
@@ -1324,21 +1419,22 @@ function CesiumViewer({
       );
 
 
-    if (data) {
+    if (
+      data
+    ) {
 
-      onSelect(
+      onSelectRef.current(
         data
       );
     }
 
 
-    onSearchResult({
+    onSearchResultRef.current({
 
       found: true,
 
       name:
-        result.entity.name ||
-        result.id,
+        result.entity.name,
     });
 
   }, [
@@ -1347,9 +1443,9 @@ function CesiumViewer({
   ]);
 
 
-  // ==========================================
+  // =========================================
   // TOPOLOGY VALIDATION
-  // ==========================================
+  // =========================================
 
   useEffect(() => {
 
@@ -1365,48 +1461,42 @@ function CesiumViewer({
       spatialObjectsRef.current;
 
 
-    // Reset colors/status first
-
     for (
-      const object of objects
+      const object
+      of objects
     ) {
 
-      if (
-        object.normalColor &&
-        object.entity.box
-      ) {
-
-        object.entity.box.material =
+      object.entity
+        .polygon
+        .material =
           object.normalColor;
 
 
-        object.entity.box.outlineColor =
+      object.entity
+        .polygon
+        .outlineColor =
           Color.WHITE;
 
 
-        if (
-          object.entity.properties
-        ) {
-
-          object.entity
-            .properties
-            .validation =
-              "Valid";
-        }
-      }
+      setValidation(
+        object.entity,
+        "Valid"
+      );
     }
 
 
-    const conflicts = [];
+    selectedEntityRef.current =
+      null;
 
 
-    // ========================================
-    // APARTMENT vs APARTMENT
-    // ========================================
+    const conflicts =
+      [];
+
+
+    // Apartment ↔ Apartment
 
     const apartments =
       objects.filter(
-
         (object) =>
           object.category ===
           "apartment"
@@ -1428,12 +1518,14 @@ function CesiumViewer({
         const a =
           apartments[i];
 
+
         const b =
           apartments[j];
 
 
         if (
-          a.floor !== b.floor
+          a.floor !==
+          b.floor
         ) {
 
           continue;
@@ -1474,13 +1566,10 @@ function CesiumViewer({
     }
 
 
-    // ========================================
-    // PARKING vs UTILITY
-    // ========================================
+    // Parking ↔ Utility
 
     const parking =
       objects.filter(
-
         (object) =>
           object.category ===
           "parking"
@@ -1489,7 +1578,6 @@ function CesiumViewer({
 
     const utilities =
       objects.filter(
-
         (object) =>
           object.category ===
           "utility"
@@ -1544,72 +1632,71 @@ function CesiumViewer({
     }
 
 
-    // ========================================
-    // NO CONFLICTS
-    // ========================================
+    // No conflicts
 
     if (
-      conflicts.length === 0
+      conflicts.length ===
+      0
     ) {
 
-      onValidationResult({
+      onValidationResultRef.current({
 
-        valid: true,
+        valid:
+          true,
 
-        conflicts: [],
+        conflicts:
+          [],
       });
 
       return;
     }
 
 
-    // ========================================
-    // MAKE CONFLICTS RED
-    // ========================================
+    // Highlight conflicts
 
     for (
       const conflict
       of conflicts
     ) {
 
-      conflict.a
-        .entity
-        .box
+      conflict.a.entity
+        .polygon
         .material =
           Color.RED
-            .withAlpha(0.95);
+            .withAlpha(
+              0.95
+            );
 
 
-      conflict.b
-        .entity
-        .box
+      conflict.b.entity
+        .polygon
         .material =
           Color.RED
-            .withAlpha(0.95);
+            .withAlpha(
+              0.95
+            );
 
 
-      conflict.a
-        .entity
-        .properties
-        .validation =
-          "Invalid – Conflict";
+      setValidation(
+        conflict.a.entity,
+        "Invalid – Conflict"
+      );
 
 
-      conflict.b
-        .entity
-        .properties
-        .validation =
-          "Invalid – Conflict";
+      setValidation(
+        conflict.b.entity,
+        "Invalid – Conflict"
+      );
     }
 
 
-    onValidationResult({
+    onValidationResultRef.current({
 
-      valid: false,
+      valid:
+        false,
 
       conflicts:
         conflicts.map(
-
           (conflict) => ({
 
             type:
@@ -1628,22 +1715,22 @@ function CesiumViewer({
     });
 
 
-    // Show first conflict in side panel
-
     const first =
       conflicts[0].a;
 
 
-    const data =
+    const firstData =
       getEntityData(
         first.entity
       );
 
 
-    if (data) {
+    if (
+      firstData
+    ) {
 
-      onSelect(
-        data
+      onSelectRef.current(
+        firstData
       );
     }
 
@@ -1652,9 +1739,9 @@ function CesiumViewer({
   ]);
 
 
-  // ==========================================
-  // RESET VALIDATION
-  // ==========================================
+  // =========================================
+  // RESET
+  // =========================================
 
   useEffect(() => {
 
@@ -1671,36 +1758,32 @@ function CesiumViewer({
       of spatialObjectsRef.current
     ) {
 
-      if (
-        object.normalColor &&
-        object.entity.box
-      ) {
-
-        object.entity.box.material =
+      object.entity
+        .polygon
+        .material =
           object.normalColor;
 
 
-        object.entity.box.outlineColor =
+      object.entity
+        .polygon
+        .outlineColor =
           Color.WHITE;
 
 
-        object.entity
-          .properties
-          .validation =
-            "Not checked";
-      }
+      setValidation(
+        object.entity,
+        "Not checked"
+      );
     }
 
 
     selectedEntityRef.current =
       null;
 
-  }, [resetTrigger]);
+  }, [
+    resetTrigger,
+  ]);
 
-
-  // ==========================================
-  // COMPONENT
-  // ==========================================
 
   return (
 

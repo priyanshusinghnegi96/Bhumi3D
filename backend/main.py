@@ -1,4 +1,5 @@
 import os
+import json
 
 import psycopg
 
@@ -333,4 +334,123 @@ def search_properties(q: str):
         "count": len(results),
 
         "results": results,
+    }
+    # ==========================================
+# GET COMPLETE 3D SCENE
+# ==========================================
+
+@app.get("/scene")
+def get_scene():
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            # ------------------------------
+            # GET PARCELS
+            # ------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    ulpin,
+                    name,
+                    ST_AsGeoJSON(geometry)
+
+                FROM parcels
+
+                ORDER BY id;
+                """
+            )
+
+            parcel_rows = cursor.fetchall()
+
+
+            parcels = []
+
+            for row in parcel_rows:
+
+                parcels.append(
+                    {
+                        "ulpin": row[0],
+
+                        "name": row[1],
+
+                        "geometry":
+                            json.loads(row[2]),
+                    }
+                )
+
+
+            # ------------------------------
+            # GET 3D PROPERTY UNITS
+            # ------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    property_type,
+                    parent_ulpin,
+                    property_id,
+                    building,
+                    floor,
+                    unit,
+                    z_min,
+                    z_max,
+                    validation,
+                    ST_AsGeoJSON(footprint)
+
+                FROM properties
+
+                ORDER BY id;
+                """
+            )
+
+            property_rows = cursor.fetchall()
+
+
+            properties = []
+
+            for row in property_rows:
+
+                properties.append(
+                    {
+                        "type": row[0],
+
+                        "parent_ulpin": row[1],
+
+                        "property_id": row[2],
+
+                        "building": row[3],
+
+                        "floor": row[4],
+
+                        "unit": row[5],
+
+                        "z_min": row[6],
+
+                        "z_max": row[7],
+
+                        "validation": row[8],
+
+                        "geometry":
+                            json.loads(row[9])
+                            if row[9]
+                            else None,
+                    }
+                )
+
+
+    return {
+        "parcel_count":
+            len(parcels),
+
+        "property_count":
+            len(properties),
+
+        "parcels":
+            parcels,
+
+        "properties":
+            properties,
     }
