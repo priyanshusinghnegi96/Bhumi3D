@@ -1,142 +1,223 @@
-import { useState } from "react";
+import {
+  useState,
+} from "react";
 
 import "./App.css";
+
 import CesiumViewer from "./cesium/CesiumViewer";
 
 import {
   getPropertyByUnit,
+  createProperty,
 } from "./services/api";
 
 
 function App() {
 
-  // =====================================
+  // ==========================================
   // SELECTED PROPERTY
-  // =====================================
+  // ==========================================
 
   const [
     selectedProperty,
-    setSelectedProperty
-  ] = useState({
-    type: "Apartment",
-    parentUlpIn: "ABC12345678901",
-    propertyId: "ABC12345678901-B01-L04-U403",
-    building: "B01",
-    floor: "04",
-    unit: "403",
-    verticalRange: "21m – 28m",
-    validation: "Not checked",
-  });
+    setSelectedProperty,
+  ] = useState(null);
 
 
-  // =====================================
+  // ==========================================
   // LAYERS
-  // =====================================
+  // ==========================================
 
   const [
     layers,
-    setLayers
+    setLayers,
   ] = useState({
+
     parcels: true,
+
     buildings: true,
+
     apartments: true,
+
     parking: true,
+
     utilities: true,
   });
 
 
-  function toggleLayer(layerName) {
-
-    setLayers((previous) => ({
-      ...previous,
-
-      [layerName]:
-        !previous[layerName],
-    }));
-  }
-
-
-  // =====================================
-  // BACKEND SEARCH
-  // =====================================
+  // ==========================================
+  // SEARCH
+  // ==========================================
 
   const [
     searchText,
-    setSearchText
-  ] = useState("");
-
-
-  const [
-    cesiumSearchText,
-    setCesiumSearchText
+    setSearchText,
   ] = useState("");
 
 
   const [
     searchTrigger,
-    setSearchTrigger
+    setSearchTrigger,
   ] = useState(0);
 
 
   const [
     searchMessage,
-    setSearchMessage
+    setSearchMessage,
   ] = useState("");
 
 
   const [
-    backendStatus,
-    setBackendStatus
-  ] = useState("Ready");
+    backendConnected,
+    setBackendConnected,
+  ] = useState(null);
 
 
-  async function runSearch() {
+  // ==========================================
+  // VALIDATION
+  // ==========================================
+
+  const [
+    validationTrigger,
+    setValidationTrigger,
+  ] = useState(0);
+
+
+  const [
+    resetTrigger,
+    setResetTrigger,
+  ] = useState(0);
+
+
+  const [
+    validationResult,
+    setValidationResult,
+  ] = useState(null);
+
+
+  // ==========================================
+  // ADD PROPERTY MODAL
+  // ==========================================
+
+  const [
+    showAddProperty,
+    setShowAddProperty,
+  ] = useState(false);
+
+
+  const [
+    sceneVersion,
+    setSceneVersion,
+  ] = useState(0);
+
+
+  const [
+    createMessage,
+    setCreateMessage,
+  ] = useState("");
+
+
+  const [
+    isCreating,
+    setIsCreating,
+  ] = useState(false);
+
+
+  const [
+    form,
+    setForm,
+  ] = useState({
+
+    property_type:
+      "Apartment",
+
+    parent_ulpin:
+      "ABC12345678901",
+
+    building:
+      "B01",
+
+    floor:
+      "06",
+
+    unit:
+      "602",
+
+    z_min:
+      "35",
+
+    z_max:
+      "42",
+
+    min_lon:
+      "77.209005",
+
+    min_lat:
+      "28.613904",
+
+    max_lon:
+      "77.209210",
+
+    max_lat:
+      "28.614039",
+  });
+
+
+  // ==========================================
+  // LAYER CHECKBOX
+  // ==========================================
+
+  function handleLayerChange(
+    layerName
+  ) {
+
+    setLayers(
+      (previous) => ({
+
+        ...previous,
+
+        [layerName]:
+          !previous[layerName],
+      })
+    );
+  }
+
+
+  // ==========================================
+  // SEARCH PROPERTY
+  // ==========================================
+
+  async function handleSearch(
+    event
+  ) {
+
+    event.preventDefault();
+
 
     const query =
       searchText.trim();
 
+
     if (!query) {
-
-      setSearchMessage(
-        "Enter a unit such as 403, P03 or W-001."
-      );
-
       return;
     }
-
-
-    setSearchMessage(
-      "Searching backend..."
-    );
-
-    setBackendStatus(
-      "Connecting..."
-    );
 
 
     try {
 
       const property =
-        await getPropertyByUnit(query);
-
-
-      if (!property) {
-
-        setSearchMessage(
-          "Property not found."
+        await getPropertyByUnit(
+          query
         );
 
-        setBackendStatus(
-          "Connected"
-        );
 
-        return;
-      }
+      setBackendConnected(
+        true
+      );
 
-
-      // Update right-side property panel
 
       setSelectedProperty({
+
         type:
           property.type,
 
@@ -147,7 +228,7 @@ function App() {
           property.property_id,
 
         building:
-          property.building ?? "—",
+          property.building,
 
         floor:
           property.floor,
@@ -163,325 +244,765 @@ function App() {
       });
 
 
-      // Tell Cesium to zoom to this unit
-
-      setCesiumSearchText(
-        property.unit
-      );
-
-      setSearchTrigger(
-        (previous) =>
-          previous + 1
-      );
-
-
       setSearchMessage(
         `Loaded from API: ${property.unit}`
       );
 
-      setBackendStatus(
-        "Connected"
+
+      setSearchTrigger(
+        (value) =>
+          value + 1
+      );
+    }
+
+    catch {
+
+      setBackendConnected(
+        false
       );
 
-    } catch (error) {
-
-      console.error(error);
 
       setSearchMessage(
-        "Could not connect to FastAPI."
-      );
-
-      setBackendStatus(
-        "Offline"
+        "Property not found or backend unavailable."
       );
     }
   }
 
 
-  function handleSearchResult(result) {
+  // ==========================================
+  // CESIUM SEARCH RESULT
+  // ==========================================
 
-    if (!result.found) {
+  function handleSearchResult(
+    result
+  ) {
+
+    if (
+      result?.found
+    ) {
 
       setSearchMessage(
-        "Property exists in backend but matching 3D object was not found."
+        `Focused on ${result.name}`
       );
     }
   }
 
 
-  // =====================================
-  // VALIDATION
-  // =====================================
+  // ==========================================
+  // VALIDATION RESULT
+  // ==========================================
 
-  const [
-    validationTrigger,
-    setValidationTrigger
-  ] = useState(0);
+  function handleValidationResult(
+    result
+  ) {
 
-
-  const [
-    resetTrigger,
-    setResetTrigger
-  ] = useState(0);
-
-
-  const [
-    validationResult,
-    setValidationResult
-  ] = useState(null);
-
-
-  function runValidation() {
-
-    setValidationTrigger(
-      (previous) =>
-        previous + 1
+    setValidationResult(
+      result
     );
   }
 
 
-  function resetValidation() {
+  // ==========================================
+  // FORM CHANGE
+  // ==========================================
 
-    setValidationResult(null);
+  function handleFormChange(
+    event
+  ) {
 
-    setSelectedProperty({
-      type: "Apartment",
-      parentUlpIn: "ABC12345678901",
-      propertyId: "ABC12345678901-B01-L04-U403",
-      building: "B01",
-      floor: "04",
-      unit: "403",
-      verticalRange: "21m – 28m",
-      validation: "Not checked",
-    });
+    const {
+      name,
+      value,
+    } = event.target;
 
-    setResetTrigger(
-      (previous) =>
-        previous + 1
+
+    setForm(
+      (previous) => ({
+
+        ...previous,
+
+        [name]:
+          value,
+      })
     );
+  }
+
+
+  // ==========================================
+  // AUTO HEIGHT WHEN FLOOR CHANGES
+  // ==========================================
+
+  function handleFloorChange(
+    event
+  ) {
+
+    const value =
+      event.target.value;
+
+
+    const floorNumber =
+      Number(
+        value.replace(
+          /\D/g,
+          ""
+        )
+      );
+
+
+    if (
+      Number.isFinite(
+        floorNumber
+      ) &&
+      floorNumber > 0
+    ) {
+
+      const zMin =
+        (
+          floorNumber - 1
+        ) * 7;
+
+
+      const zMax =
+        floorNumber * 7;
+
+
+      setForm(
+        (previous) => ({
+
+          ...previous,
+
+          floor:
+            value,
+
+          z_min:
+            String(
+              zMin
+            ),
+
+          z_max:
+            String(
+              zMax
+            ),
+        })
+      );
+    }
+
+    else {
+
+      setForm(
+        (previous) => ({
+
+          ...previous,
+
+          floor:
+            value,
+        })
+      );
+    }
+  }
+
+
+  // ==========================================
+  // CREATE PROPERTY
+  // ==========================================
+
+  async function handleCreateProperty(
+    event
+  ) {
+
+    event.preventDefault();
+
+
+    setIsCreating(
+      true
+    );
+
+
+    setCreateMessage(
+      "Creating property..."
+    );
+
+
+    try {
+
+      const result =
+        await createProperty({
+
+          property_type:
+            form.property_type,
+
+          parent_ulpin:
+            form.parent_ulpin,
+
+          building:
+            form.building,
+
+          floor:
+            form.floor,
+
+          unit:
+            form.unit,
+
+          z_min:
+            Number(
+              form.z_min
+            ),
+
+          z_max:
+            Number(
+              form.z_max
+            ),
+
+          min_lon:
+            Number(
+              form.min_lon
+            ),
+
+          min_lat:
+            Number(
+              form.min_lat
+            ),
+
+          max_lon:
+            Number(
+              form.max_lon
+            ),
+
+          max_lat:
+            Number(
+              form.max_lat
+            ),
+        });
+
+
+      setBackendConnected(
+        true
+      );
+
+
+      setCreateMessage(
+        `Created: ${result.property_id}`
+      );
+
+
+      // --------------------------------------
+      // Reload Cesium scene from PostGIS
+      // --------------------------------------
+
+      setSceneVersion(
+        (value) =>
+          value + 1
+      );
+
+
+      // --------------------------------------
+      // Search for newly created property
+      // after scene reload
+      // --------------------------------------
+
+      setSearchText(
+        result.unit
+      );
+
+
+      setTimeout(
+        () => {
+
+          setSearchTrigger(
+            (value) =>
+              value + 1
+          );
+
+        },
+        1000
+      );
+
+
+      // Give user time to read generated ID
+
+      setTimeout(
+        () => {
+
+          setShowAddProperty(
+            false
+          );
+
+        },
+        1800
+      );
+    }
+
+    catch (
+      error
+    ) {
+
+      setCreateMessage(
+        error.message
+      );
+    }
+
+    finally {
+
+      setIsCreating(
+        false
+      );
+    }
   }
 
 
   return (
 
-    <div className="app">
+    <div
+      className="app"
+    >
 
-      {/* NAVBAR */}
+      {/* ===================================
+          HEADER
+      =================================== */}
 
-      <header className="navbar">
+      <header
+        className="topbar"
+      >
 
-        <div>
+        <div
+          className="brand"
+        >
 
-          <h1>
+          <div
+            className="brand-title"
+          >
             Bhumi3D
-          </h1>
+          </div>
 
-          <p>
-            3D ULPIN & Vertical Property Mapping System
-          </p>
+          <div
+            className="brand-subtitle"
+          >
+            3D ULPIN & Vertical Property Mapping
+          </div>
 
         </div>
 
-        <div className="status">
-          SIH26011
+
+        <div
+          className="header-actions"
+        >
+
+          <button
+            className="add-property-button"
+
+            onClick={
+              () => {
+
+                setCreateMessage(
+                  ""
+                );
+
+                setShowAddProperty(
+                  true
+                );
+              }
+            }
+          >
+            + Add Property
+          </button>
+
+
+          <div
+            className={
+              backendConnected === false
+
+                ? "backend-status offline"
+
+                : "backend-status online"
+            }
+          >
+
+            <span
+              className="status-dot"
+            />
+
+            Backend:
+            {
+              backendConnected === false
+
+                ? " Offline"
+
+                : " Connected"
+            }
+
+          </div>
+
         </div>
 
       </header>
 
 
-      <main className="main-layout">
+      {/* ===================================
+          MAIN WORKSPACE
+      =================================== */}
 
-        {/* LEFT SIDEBAR */}
+      <main
+        className="workspace"
+      >
 
-        <aside className="sidebar">
+        {/* =================================
+            LEFT SIDEBAR
+        ================================= */}
 
-          <h2>
-            Layers
-          </h2>
+        <aside
+          className="left-sidebar"
+        >
+
+          <section
+            className="sidebar-section"
+          >
+
+            <h3>
+              Property Search
+            </h3>
 
 
-          <label>
+            <form
+              className="search-form"
 
-            <input
-              type="checkbox"
-              checked={layers.parcels}
-              onChange={() =>
-                toggleLayer("parcels")
+              onSubmit={
+                handleSearch
               }
-            />
+            >
 
-            Land Parcels
+              <input
+                type="text"
 
-          </label>
+                value={
+                  searchText
+                }
 
+                onChange={
+                  (event) =>
+                    setSearchText(
+                      event.target.value
+                    )
+                }
 
-          <label>
-
-            <input
-              type="checkbox"
-              checked={layers.buildings}
-              onChange={() =>
-                toggleLayer("buildings")
-              }
-            />
-
-            Building Floors
-
-          </label>
+                placeholder="403, P03, W-001..."
+              />
 
 
-          <label>
+              <button
+                type="submit"
+              >
+                Search
+              </button>
 
-            <input
-              type="checkbox"
-              checked={layers.apartments}
-              onChange={() =>
-                toggleLayer("apartments")
-              }
-            />
-
-            Property Units
-
-          </label>
+            </form>
 
 
-          <label>
+            {
+              searchMessage && (
 
-            <input
-              type="checkbox"
-              checked={layers.parking}
-              onChange={() =>
-                toggleLayer("parking")
-              }
-            />
-
-            Basement Parking
-
-          </label>
-
-
-          <label>
-
-            <input
-              type="checkbox"
-              checked={layers.utilities}
-              onChange={() =>
-                toggleLayer("utilities")
-              }
-            />
-
-            Underground Utilities
-
-          </label>
-
-
-          <hr />
-
-
-          {/* SEARCH */}
-
-          <h2>
-            Search Property
-          </h2>
-
-
-          <input
-            className="search-input"
-
-            type="text"
-
-            value={searchText}
-
-            placeholder="403, P03 or W-001"
-
-            onChange={(event) =>
-              setSearchText(
-                event.target.value
+                <div
+                  className="search-message"
+                >
+                  {
+                    searchMessage
+                  }
+                </div>
               )
             }
 
-            onKeyDown={(event) => {
+          </section>
 
-              if (
-                event.key === "Enter"
-              ) {
 
-                runSearch();
+          <section
+            className="sidebar-section"
+          >
+
+            <h3>
+              Layers
+            </h3>
+
+
+            {
+              [
+                [
+                  "parcels",
+                  "Land Parcel",
+                ],
+
+                [
+                  "buildings",
+                  "Floor Slabs",
+                ],
+
+                [
+                  "apartments",
+                  "Apartments",
+                ],
+
+                [
+                  "parking",
+                  "Basement Parking",
+                ],
+
+                [
+                  "utilities",
+                  "Underground Utility",
+                ],
+              ]
+              .map(
+                (
+                  [
+                    key,
+                    label,
+                  ]
+                ) => (
+
+                  <label
+                    className="layer-row"
+
+                    key={
+                      key
+                    }
+                  >
+
+                    <input
+                      type="checkbox"
+
+                      checked={
+                        layers[key]
+                      }
+
+                      onChange={
+                        () =>
+                          handleLayerChange(
+                            key
+                          )
+                      }
+                    />
+
+                    <span>
+                      {
+                        label
+                      }
+                    </span>
+
+                  </label>
+                )
+              )
+            }
+
+          </section>
+
+
+          <section
+            className="sidebar-section"
+          >
+
+            <h3>
+              Topology Validation
+            </h3>
+
+
+            <button
+              className="validation-button"
+
+              onClick={
+                () =>
+                  setValidationTrigger(
+                    (value) =>
+                      value + 1
+                  )
               }
-            }}
-          />
+            >
+              Run Validation
+            </button>
 
 
-          <button
-            className="search-button"
-            onClick={runSearch}
+            <button
+              className="reset-button"
+
+              onClick={
+                () => {
+
+                  setResetTrigger(
+                    (value) =>
+                      value + 1
+                  );
+
+                  setValidationResult(
+                    null
+                  );
+                }
+              }
+            >
+              Reset Validation
+            </button>
+
+
+            {
+              validationResult && (
+
+                <div
+                  className="validation-results"
+                >
+
+                  {
+                    validationResult.valid
+
+                      ? (
+
+                        <div
+                          className="validation-success"
+                        >
+                          ✓ No spatial conflicts found
+                        </div>
+                      )
+
+                      : (
+
+                        <>
+                          <div
+                            className="validation-error"
+                          >
+                            {
+                              validationResult
+                                .conflicts
+                                .length
+                            } conflict(s) detected
+                          </div>
+
+
+                          {
+                            validationResult
+                              .conflicts
+                              .map(
+                                (
+                                  conflict,
+                                  index
+                                ) => (
+
+                                  <div
+                                    className="conflict-card"
+
+                                    key={
+                                      index
+                                    }
+                                  >
+
+                                    <strong>
+                                      {
+                                        conflict.type
+                                      }
+                                    </strong>
+
+                                    <div>
+                                      {
+                                        conflict.objectA
+                                      }
+                                    </div>
+
+                                    <div>
+                                      ↕
+                                    </div>
+
+                                    <div>
+                                      {
+                                        conflict.objectB
+                                      }
+                                    </div>
+
+                                    <small>
+                                      Overlap:
+                                      {" "}
+                                      {
+                                        conflict.volume
+                                      }
+                                      {" "}
+                                      m³
+                                    </small>
+
+                                  </div>
+                                )
+                              )
+                          }
+
+                        </>
+                      )
+                  }
+
+                </div>
+              )
+            }
+
+          </section>
+
+
+          <section
+            className="sidebar-section"
           >
-            Search
-          </button>
+
+            <h3>
+              Legend
+            </h3>
 
 
-          {searchMessage && (
-
-            <p className="search-message">
-              {searchMessage}
-            </p>
-
-          )}
-
-
-          <div className="backend-status">
-
-            Backend:{" "}
-
-            <strong>
-              {backendStatus}
-            </strong>
-
-          </div>
+            <div
+              className="legend-item"
+            >
+              <span
+                className="legend blue"
+              />
+              Apartment
+            </div>
 
 
-          <hr />
+            <div
+              className="legend-item"
+            >
+              <span
+                className="legend orange"
+              />
+              Parking
+            </div>
 
 
-          {/* VALIDATION */}
-
-          <h2>
-            Topology Validation
-          </h2>
-
-
-          <p className="validation-help">
-
-            Detect overlapping ownership
-            volumes and underground
-            infrastructure conflicts.
-
-          </p>
+            <div
+              className="legend-item"
+            >
+              <span
+                className="legend cyan"
+              />
+              Utility
+            </div>
 
 
-          <button
-            className="validate-button"
-            onClick={runValidation}
-          >
-            Run Validation
-          </button>
+            <div
+              className="legend-item"
+            >
+              <span
+                className="legend red"
+              />
+              Spatial Conflict
+            </div>
 
-
-          <button
-            className="reset-button"
-            onClick={resetValidation}
-          >
-            Reset Validation
-          </button>
+          </section>
 
         </aside>
 
 
-        {/* CESIUM */}
+        {/* =================================
+            CESIUM
+        ================================= */}
 
-        <section className="map-area">
+        <section
+          className="map-area"
+        >
 
           <CesiumViewer
+
+            key={
+              sceneVersion
+            }
 
             onSelect={
               setSelectedProperty
@@ -492,7 +1013,7 @@ function App() {
             }
 
             searchText={
-              cesiumSearchText
+              searchText
             }
 
             searchTrigger={
@@ -512,254 +1033,529 @@ function App() {
             }
 
             onValidationResult={
-              setValidationResult
+              handleValidationResult
             }
-
           />
-
-
-          <div className="viewer-label">
-            3D Volumetric Cadastre
-          </div>
-
-
-          <div className="viewer-legend">
-
-            <div>
-              <span className="legend-blue" />
-              Apartments
-            </div>
-
-            <div>
-              <span className="legend-orange" />
-              Basement Parking
-            </div>
-
-            <div>
-              <span className="legend-cyan" />
-              Underground Utility
-            </div>
-
-            <div>
-              <span className="legend-red" />
-              Conflict
-            </div>
-
-          </div>
 
         </section>
 
 
-        {/* RIGHT PANEL */}
+        {/* =================================
+            PROPERTY PANEL
+        ================================= */}
 
-        <aside className="property-panel">
+        <aside
+          className="property-panel"
+        >
 
           <h2>
             Property Information
           </h2>
 
 
-          <div className="property-item">
+          {
+            !selectedProperty
 
-            <span>Type</span>
+              ? (
 
-            <strong>
-              {selectedProperty.type}
-            </strong>
+                <div
+                  className="empty-property"
+                >
+                  Click a 3D property or search for a unit.
+                </div>
+              )
 
-          </div>
+              : (
 
+                <div
+                  className="property-details"
+                >
 
-          <div className="property-item">
-
-            <span>
-              Parent ULPIN
-            </span>
-
-            <strong>
-              {selectedProperty.parentUlpIn}
-            </strong>
-
-          </div>
-
-
-          <div className="property-item">
-
-            <span>
-              3D Property ID
-            </span>
-
-            <strong>
-              {selectedProperty.propertyId}
-            </strong>
-
-          </div>
+                  <InfoRow
+                    label="Type"
+                    value={
+                      selectedProperty.type
+                    }
+                  />
 
 
-          <div className="property-item">
-
-            <span>
-              Building
-            </span>
-
-            <strong>
-              {selectedProperty.building}
-            </strong>
-
-          </div>
+                  <InfoRow
+                    label="Parent ULPIN"
+                    value={
+                      selectedProperty.parentUlpIn
+                    }
+                  />
 
 
-          <div className="property-item">
-
-            <span>
-              Floor / Level
-            </span>
-
-            <strong>
-              {selectedProperty.floor}
-            </strong>
-
-          </div>
+                  <InfoRow
+                    label="Spatial ID"
+                    value={
+                      selectedProperty.propertyId
+                    }
+                  />
 
 
-          <div className="property-item">
-
-            <span>
-              Unit
-            </span>
-
-            <strong>
-              {selectedProperty.unit}
-            </strong>
-
-          </div>
+                  <InfoRow
+                    label="Building"
+                    value={
+                      selectedProperty.building
+                    }
+                  />
 
 
-          <div className="property-item">
-
-            <span>
-              Vertical Range
-            </span>
-
-            <strong>
-              {selectedProperty.verticalRange}
-            </strong>
-
-          </div>
+                  <InfoRow
+                    label="Floor"
+                    value={
+                      selectedProperty.floor
+                    }
+                  />
 
 
-          <div className="property-item">
-
-            <span>
-              Validation
-            </span>
-
-            <strong
-              className={
-                (
-                  selectedProperty.validation ||
-                  ""
-                )
-                  .toLowerCase()
-                  .includes("invalid")
-                  ? "invalid"
-                  : "valid"
-              }
-            >
-              {selectedProperty.validation}
-            </strong>
-
-          </div>
+                  <InfoRow
+                    label="Unit"
+                    value={
+                      selectedProperty.unit
+                    }
+                  />
 
 
-          {/* VALIDATION RESULTS */}
-
-          {validationResult && (
-
-            <div
-              className={
-                validationResult.valid
-                  ? "validation-card success"
-                  : "validation-card error"
-              }
-            >
-
-              <h3>
-
-                {
-                  validationResult.valid
-                    ? "✓ Model Valid"
-                    : `⚠ ${validationResult.conflicts.length} Conflicts Detected`
-                }
-
-              </h3>
+                  <InfoRow
+                    label="Vertical Range"
+                    value={
+                      selectedProperty.verticalRange
+                    }
+                  />
 
 
-              {
-                validationResult.valid && (
+                  <InfoRow
+                    label="Validation"
+                    value={
+                      selectedProperty.validation
+                    }
+                  />
 
-                  <p>
-                    No volumetric conflicts
-                    were detected.
-                  </p>
-
-                )
-              }
-
-
-              {
-                !validationResult.valid &&
-
-                validationResult.conflicts.map(
-                  (conflict, index) => (
-
-                    <div
-                      className="conflict-item"
-                      key={index}
-                    >
-
-                      <div className="conflict-number">
-                        Conflict {index + 1}
-                      </div>
-
-                      <p>
-                        <strong>Type:</strong>{" "}
-                        {conflict.type}
-                      </p>
-
-                      <p>
-                        <strong>Object A:</strong>{" "}
-                        {conflict.objectA}
-                      </p>
-
-                      <p>
-                        <strong>Object B:</strong>{" "}
-                        {conflict.objectB}
-                      </p>
-
-                      <p>
-                        <strong>Overlap:</strong>{" "}
-                        {conflict.volume} m³
-                      </p>
-
-                      <p>
-                        <strong>Severity:</strong>{" "}
-                        HIGH
-                      </p>
-
-                    </div>
-
-                  )
-                )
-              }
-
-            </div>
-
-          )}
+                </div>
+              )
+          }
 
         </aside>
 
       </main>
+
+
+      {/* ===================================
+          ADD PROPERTY MODAL
+      =================================== */}
+
+      {
+        showAddProperty && (
+
+          <div
+            className="modal-backdrop"
+          >
+
+            <div
+              className="property-modal"
+            >
+
+              <div
+                className="modal-header"
+              >
+
+                <div>
+
+                  <h2>
+                    Add 3D Property
+                  </h2>
+
+                  <p>
+                    The spatial ID will be generated automatically by PostgreSQL.
+                  </p>
+
+                </div>
+
+
+                <button
+                  className="close-button"
+
+                  type="button"
+
+                  onClick={
+                    () =>
+                      setShowAddProperty(
+                        false
+                      )
+                  }
+                >
+                  ×
+                </button>
+
+              </div>
+
+
+              <form
+                className="property-form"
+
+                onSubmit={
+                  handleCreateProperty
+                }
+              >
+
+                <label>
+
+                  Property Type
+
+                  <select
+                    name="property_type"
+
+                    value={
+                      form.property_type
+                    }
+
+                    onChange={
+                      handleFormChange
+                    }
+                  >
+
+                    <option>
+                      Apartment
+                    </option>
+
+                    <option>
+                      Basement Parking
+                    </option>
+
+                    <option>
+                      Underground Utility
+                    </option>
+
+                  </select>
+
+                </label>
+
+
+                <label>
+
+                  Parent ULPIN
+
+                  <input
+                    name="parent_ulpin"
+
+                    value={
+                      form.parent_ulpin
+                    }
+
+                    onChange={
+                      handleFormChange
+                    }
+
+                    required
+                  />
+
+                </label>
+
+
+                <div
+                  className="form-grid"
+                >
+
+                  <label>
+
+                    Building
+
+                    <input
+                      name="building"
+
+                      value={
+                        form.building
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Floor
+
+                    <input
+                      name="floor"
+
+                      value={
+                        form.floor
+                      }
+
+                      onChange={
+                        handleFloorChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Unit
+
+                    <input
+                      name="unit"
+
+                      value={
+                        form.unit
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Z Min (m)
+
+                    <input
+                      name="z_min"
+
+                      type="number"
+
+                      step="0.1"
+
+                      value={
+                        form.z_min
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Z Max (m)
+
+                    <input
+                      name="z_max"
+
+                      type="number"
+
+                      step="0.1"
+
+                      value={
+                        form.z_max
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+                </div>
+
+
+                <h3>
+                  Footprint Coordinates
+                </h3>
+
+
+                <div
+                  className="form-grid"
+                >
+
+                  <label>
+
+                    Min Longitude
+
+                    <input
+                      name="min_lon"
+
+                      type="number"
+
+                      step="any"
+
+                      value={
+                        form.min_lon
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Min Latitude
+
+                    <input
+                      name="min_lat"
+
+                      type="number"
+
+                      step="any"
+
+                      value={
+                        form.min_lat
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Max Longitude
+
+                    <input
+                      name="max_lon"
+
+                      type="number"
+
+                      step="any"
+
+                      value={
+                        form.max_lon
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+
+                  <label>
+
+                    Max Latitude
+
+                    <input
+                      name="max_lat"
+
+                      type="number"
+
+                      step="any"
+
+                      value={
+                        form.max_lat
+                      }
+
+                      onChange={
+                        handleFormChange
+                      }
+
+                      required
+                    />
+
+                  </label>
+
+                </div>
+
+
+                {
+                  createMessage && (
+
+                    <div
+                      className="create-message"
+                    >
+                      {
+                        createMessage
+                      }
+                    </div>
+                  )
+                }
+
+
+                <button
+                  className="create-property-button"
+
+                  type="submit"
+
+                  disabled={
+                    isCreating
+                  }
+                >
+
+                  {
+                    isCreating
+
+                      ? "Creating..."
+
+                      : "Generate & Add Property"
+                  }
+
+                </button>
+
+              </form>
+
+            </div>
+
+          </div>
+        )
+      }
+
+    </div>
+  );
+}
+
+
+function InfoRow({
+  label,
+  value,
+}) {
+
+  return (
+
+    <div
+      className="info-row"
+    >
+
+      <span
+        className="info-label"
+      >
+        {
+          label
+        }
+      </span>
+
+      <span
+        className="info-value"
+      >
+        {
+          value ?? "—"
+        }
+      </span>
 
     </div>
   );

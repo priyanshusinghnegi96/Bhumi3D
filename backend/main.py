@@ -5,6 +5,7 @@ import psycopg
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -70,6 +71,24 @@ def get_connection():
 # ==========================================
 # HOME
 # ==========================================
+# ==========================================
+# PROPERTY CREATE MODEL
+# ==========================================
+
+class PropertyCreate(BaseModel):
+    property_type: str
+    parent_ulpin: str
+    building: str | None = "B01"
+    floor: str | None = None
+    unit: str
+
+    z_min: float
+    z_max: float
+
+    min_lon: float
+    min_lat: float
+    max_lon: float
+    max_lat: float
 
 @app.get("/")
 def home():
@@ -626,3 +645,195 @@ def validate_topology():
 
         "conflicts": conflicts,
     }
+    # ==========================================
+# CREATE NEW 3D PROPERTY
+# ==========================================
+
+@app.post("/properties")
+def create_property(property: PropertyCreate):
+
+    allowed_types = {
+        "Apartment",
+        "Basement Parking",
+        "Underground Utility",
+    }
+
+
+    # --------------------------------------
+    # VALIDATE PROPERTY TYPE
+    # --------------------------------------
+
+    if property.property_type not in allowed_types:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid property type",
+        )
+
+
+    # --------------------------------------
+    # VALIDATE HEIGHT
+    # --------------------------------------
+
+    if property.z_max <= property.z_min:
+
+        raise HTTPException(
+            status_code=400,
+            detail="z_max must be greater than z_min",
+        )
+
+
+    # --------------------------------------
+    # VALIDATE FOOTPRINT
+    # --------------------------------------
+
+    if property.max_lon <= property.min_lon:
+
+        raise HTTPException(
+            status_code=400,
+            detail="max_lon must be greater than min_lon",
+        )
+
+
+    if property.max_lat <= property.min_lat:
+
+        raise HTTPException(
+            status_code=400,
+            detail="max_lat must be greater than min_lat",
+        )
+
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                # ----------------------------------
+                # CHECK PARENT ULPIN
+                # ----------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM parcels
+                    WHERE ulpin = %s;
+                    """,
+                    (
+                        property.parent_ulpin,
+                    ),
+                )
+
+
+                parcel = cursor.fetchone()
+
+
+                if parcel is None:
+
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Parent ULPIN does not exist",
+                    )
+
+
+                # ----------------------------------
+                # INSERT PROPERTY
+                #
+                # property_id IS NOT PROVIDED.
+                #
+                # PostgreSQL trigger automatically
+                # generates it.
+                # ----------------------------------
+
+                cursor.execute(
+                    """
+                    INSERT INTO properties (
+                        property_type,
+                        parent_ulpin,
+                        building,
+                        floor,
+                        unit,
+                        z_min,
+                        z_max,
+                        validation,
+                        footprint
+                    )
+
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'Not checked',
+
+                        ST_MakeEnvelope(
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            4326
+                        )
+                    )
+
+                    RETURNING
+                        id,
+                        property_id;
+                    """,
+                    (
+                        property.property_type,
+                        property.parent_ulpin,
+                        property.building,
+                        property.floor,
+                        property.unit,
+                        property.z_min,
+                        property.z_max,
+
+                        property.min_lon,
+                        property.min_lat,
+                        property.max_lon,
+                        property.max_lat,
+                    ),
+                )
+
+
+                created = cursor.fetchone()
+
+
+        return {
+            "success": True,
+
+            "message": "3D property created successfully",
+
+            "id": created[0],
+
+            "property_id": created[1],
+
+            "unit": property.unit,
+        }
+
+
+    except HTTPException:
+
+        raise
+
+
+    except psycopg.errors.UniqueViolation:
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A property with this generated "
+                "spatial ID already exists"
+            ),
+        )
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )

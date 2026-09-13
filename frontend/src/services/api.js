@@ -20,9 +20,7 @@ export async function getScene() {
   );
 
   if (!response.ok) {
-    throw new Error(
-      "Could not load Bhumi3D scene"
-    );
+    throw new Error("Could not load Bhumi3D scene");
   }
 
   return await response.json();
@@ -35,10 +33,37 @@ export async function validateTopology() {
   );
 
   if (!response.ok) {
-    throw new Error(
-      "PostGIS topology validation failed"
-    );
+    throw new Error("PostGIS topology validation failed");
   }
 
   return await response.json();
+}
+
+
+export async function createProperty(propertyData) {
+  const response = await fetch(
+    `${API_BASE_URL}/properties`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      body: JSON.stringify(propertyData),
+    }
+  );
+
+
+  const data = await response.json();
+
+
+  if (!response.ok) {
+    throw new Error(
+      data.detail || "Could not create property"
+    );
+  }
+
+
+  return data;
 }
