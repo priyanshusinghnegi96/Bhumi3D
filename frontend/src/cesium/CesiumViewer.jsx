@@ -22,6 +22,7 @@ import {
 import {
   getScene,
   getGISFeatures,
+  getColonyAssets,
   validateTopology,
   validateCadastral,
 } from "../services/api";
@@ -69,6 +70,9 @@ function CesiumViewer({
     useRef({
       parcels: [],
       buildings: [],
+      roads: [],
+      amenities: [],
+      lights: [],
       apartments: [],
       parking: [],
       utilities: [],
@@ -1371,10 +1375,12 @@ function CesiumViewer({
         const [
           scene,
           gisData,
+          colonyData,
         ] =
           await Promise.all([
             getScene(),
             getGISFeatures(),
+            getColonyAssets(),
           ]);
 
 
@@ -1406,6 +1412,9 @@ function CesiumViewer({
           {
             parcels: [],
             buildings: [],
+            roads: [],
+            amenities: [],
+            lights: [],
             apartments: [],
             parking: [],
             utilities: [],
@@ -1536,6 +1545,245 @@ function CesiumViewer({
             .push(
               entity
             );
+        }
+
+
+        // =================================================
+        // COLONY INFRASTRUCTURE + AMENITIES
+        // =================================================
+
+        for (
+          const asset
+          of colonyData.assets || []
+        ) {
+
+          if (!asset.geometry) {
+            continue;
+          }
+
+          const assetType =
+            String(asset.asset_type || "")
+              .toLowerCase();
+
+
+          if (
+            assetType === "road" &&
+            asset.geometry.type === "Polygon"
+          ) {
+
+            const positions =
+              geometryToPositions(asset.geometry);
+
+            if (positions.length < 3) {
+              continue;
+            }
+
+            const roadMaterial =
+              Color.fromCssColorString("#474c52")
+                .withAlpha(0.96);
+
+            const roadEntity =
+              viewer.entities.add({
+                id: `colony-road-${asset.id}`,
+                name: asset.name,
+                show: layers.roads,
+
+                polygon: {
+                  hierarchy:
+                    new PolygonHierarchy(positions),
+                  height: 0.36,
+                  extrudedHeight: 0.43,
+                  material: roadMaterial,
+                  outline: true,
+                  outlineColor:
+                    Color.fromCssColorString("#c7c9c8"),
+                },
+
+                properties: {
+                  type: "Road",
+                  parentUlpIn: "Public Infrastructure",
+                  propertyId: `ASSET-${asset.id}`,
+                  building: "—",
+                  floor: "Surface",
+                  unit: "—",
+                  verticalRange: "Surface",
+                  validation:
+                    asset.properties?.road_class || "Planned road",
+                },
+              });
+
+            layerEntitiesRef.current.roads.push(roadEntity);
+            continue;
+          }
+
+
+          if (
+            [
+              "park",
+              "surface_parking",
+              "playground",
+            ].includes(assetType) &&
+            asset.geometry.type === "Polygon"
+          ) {
+
+            const positions =
+              geometryToPositions(asset.geometry);
+
+            if (positions.length < 3) {
+              continue;
+            }
+
+            let amenityColor =
+              Color.fromCssColorString("#5aa469");
+
+            if (assetType === "surface_parking") {
+              amenityColor =
+                Color.fromCssColorString("#777d82");
+            }
+
+            if (assetType === "playground") {
+              amenityColor =
+                Color.fromCssColorString("#d4a84c");
+            }
+
+            const amenityEntity =
+              viewer.entities.add({
+                id: `colony-amenity-${asset.id}`,
+                name: asset.name,
+                show: layers.amenities,
+
+                polygon: {
+                  hierarchy:
+                    new PolygonHierarchy(positions),
+                  height: 0.37,
+                  extrudedHeight: 0.52,
+                  material:
+                    amenityColor.withAlpha(0.88),
+                  outline: true,
+                  outlineColor: Color.WHITE,
+                },
+
+                properties: {
+                  type:
+                    assetType === "park"
+                      ? "Public Park"
+                      : assetType === "playground"
+                        ? "School Playground"
+                        : "Common Parking",
+                  parentUlpIn:
+                    asset.properties?.parent_ulpin || "—",
+                  propertyId: `ASSET-${asset.id}`,
+                  building: "—",
+                  floor: "Surface",
+                  unit: "—",
+                  verticalRange: "Surface",
+                  validation: "Planned colony amenity",
+                },
+              });
+
+            layerEntitiesRef.current.amenities.push(amenityEntity);
+
+            const bounds =
+              getGeometryBounds(asset.geometry);
+
+            if (bounds) {
+              const labelEntity =
+                viewer.entities.add({
+                  position:
+                    Cartesian3.fromDegrees(
+                      (bounds.minLon + bounds.maxLon) / 2,
+                      (bounds.minLat + bounds.maxLat) / 2,
+                      2.0
+                    ),
+                  show: layers.amenities,
+                  label: {
+                    text: asset.name,
+                    font: "bold 11px sans-serif",
+                    style: LabelStyle.FILL_AND_OUTLINE,
+                    fillColor: Color.WHITE,
+                    outlineColor: Color.BLACK,
+                    outlineWidth: 3,
+                    verticalOrigin: VerticalOrigin.BOTTOM,
+                    disableDepthTestDistance:
+                      Number.POSITIVE_INFINITY,
+                  },
+                });
+
+              layerEntitiesRef.current.amenities.push(labelEntity);
+            }
+
+            continue;
+          }
+
+
+          if (
+            assetType === "streetlight" &&
+            asset.geometry.type === "Point"
+          ) {
+
+            const [longitude, latitude] =
+              asset.geometry.coordinates;
+
+            const height =
+              Number(asset.properties?.height_m || 8);
+
+            const poleEntity =
+              viewer.entities.add({
+                id: `colony-light-${asset.id}`,
+                name: asset.name,
+                position:
+                  Cartesian3.fromDegrees(
+                    longitude,
+                    latitude,
+                    height / 2
+                  ),
+                show: layers.lights,
+
+                cylinder: {
+                  length: height,
+                  topRadius: 0.08,
+                  bottomRadius: 0.12,
+                  material:
+                    Color.fromCssColorString("#353a3d"),
+                },
+
+                properties: {
+                  type: "Street Light",
+                  parentUlpIn: "Public Infrastructure",
+                  propertyId: `ASSET-${asset.id}`,
+                  building: "—",
+                  floor: "—",
+                  unit: "—",
+                  verticalRange: `0m – ${height}m`,
+                  validation: "Planned infrastructure",
+                },
+              });
+
+            const lampEntity =
+              viewer.entities.add({
+                position:
+                  Cartesian3.fromDegrees(
+                    longitude,
+                    latitude,
+                    height + 0.12
+                  ),
+                show: layers.lights,
+                point: {
+                  pixelSize: 5,
+                  color:
+                    Color.fromCssColorString("#ffe58a"),
+                  outlineColor: Color.WHITE,
+                  outlineWidth: 1,
+                  disableDepthTestDistance:
+                    Number.POSITIVE_INFINITY,
+                },
+              });
+
+            layerEntitiesRef.current.lights.push(
+              poleEntity,
+              lampEntity
+            );
+          }
         }
 
 
@@ -1885,6 +2133,39 @@ function CesiumViewer({
             floors;
 
 
+          const buildingType =
+            feature.properties
+              ?.building_type
+            ??
+            feature.feature_type
+            ??
+            "Building";
+
+
+          let buildingColor =
+            Color.fromCssColorString("#7657a8");
+
+
+          if (
+            String(buildingType)
+              .toLowerCase()
+              .includes("school")
+          ) {
+            buildingColor =
+              Color.fromCssColorString("#d88b3d");
+          }
+
+
+          if (
+            String(buildingType)
+              .toLowerCase()
+              .includes("office")
+          ) {
+            buildingColor =
+              Color.fromCssColorString("#2f7f87");
+          }
+
+
           const buildingKey =
             getBuildingKey(
               parentUlpIn,
@@ -1953,9 +2234,9 @@ function CesiumViewer({
             // =============================================
 
             const footprintMaterial =
-              Color.PURPLE
+              buildingColor
                 .withAlpha(
-                  0.45
+                  0.20
                 );
 
 
@@ -1980,7 +2261,7 @@ function CesiumViewer({
                     0.38,
 
                   extrudedHeight:
-                    0.52,
+                    Math.max(0.52, totalHeight),
 
                   material:
                     footprintMaterial,
@@ -1989,7 +2270,7 @@ function CesiumViewer({
                     true,
 
                   outlineColor:
-                    Color.PURPLE,
+                    Color.WHITE,
                 },
 
                 properties: {
@@ -2023,7 +2304,7 @@ function CesiumViewer({
             registerVisualDefault(
               footprintEntity,
               footprintMaterial,
-              Color.PURPLE
+              Color.WHITE
             );
 
 
@@ -2058,9 +2339,9 @@ function CesiumViewer({
 
 
               const slabMaterial =
-                Color.GRAY
+                buildingColor
                   .withAlpha(
-                    0.65
+                    0.52
                   );
 
 
@@ -2189,7 +2470,7 @@ function CesiumViewer({
 
                 label: {
                   text:
-                    buildingCode,
+                    `${buildingCode} • ${floors}F`,
 
                   font:
                     "bold 18px sans-serif",
@@ -2274,7 +2555,7 @@ function CesiumViewer({
               -30
             ),
 
-            420
+            900
           )
         );
       }
@@ -2918,6 +3199,36 @@ function CesiumViewer({
 
       entity.show =
         layers.buildings;
+    }
+
+
+    for (
+      const entity
+      of groups.roads
+    ) {
+
+      entity.show =
+        layers.roads;
+    }
+
+
+    for (
+      const entity
+      of groups.amenities
+    ) {
+
+      entity.show =
+        layers.amenities;
+    }
+
+
+    for (
+      const entity
+      of groups.lights
+    ) {
+
+      entity.show =
+        layers.lights;
     }
 
 

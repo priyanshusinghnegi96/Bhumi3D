@@ -49,7 +49,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="0.9.0",
+    version="1.0.0",
 )
 
 
@@ -182,7 +182,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "0.9.0",
+        "version": "1.0.0",
     }
 
 
@@ -1317,6 +1317,781 @@ def get_gis_features():
         "features":
             features,
     }
+
+
+# =========================================================
+# PLANNED COLONY DEMO
+# =========================================================
+
+def ensure_colony_assets_table(cursor):
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS colony_assets (
+            id SERIAL PRIMARY KEY,
+            asset_type VARCHAR(50) NOT NULL,
+            name VARCHAR(150),
+            properties JSONB DEFAULT '{}'::jsonb,
+            geometry GEOMETRY(Geometry, 4326) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            colony_assets_geometry_gix
+        ON colony_assets
+        USING GIST (geometry);
+        """
+    )
+
+
+@app.get("/colony/assets")
+def get_colony_assets():
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            ensure_colony_assets_table(cursor)
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    asset_type,
+                    name,
+                    properties,
+                    ST_AsGeoJSON(geometry)
+
+                FROM colony_assets
+
+                ORDER BY id;
+                """
+            )
+
+            rows = cursor.fetchall()
+
+
+    assets = []
+
+    for row in rows:
+
+        assets.append(
+            {
+                "id": row[0],
+                "asset_type": row[1],
+                "name": row[2],
+                "properties": row[3],
+                "geometry": (
+                    json.loads(row[4])
+                    if row[4]
+                    else None
+                ),
+            }
+        )
+
+
+    return {
+        "count": len(assets),
+        "assets": assets,
+    }
+
+
+def _insert_colony_asset(
+    cursor,
+    asset_type,
+    name,
+    properties,
+    geometry_sql,
+    geometry_parameters,
+):
+
+    cursor.execute(
+        f"""
+        INSERT INTO colony_assets (
+            asset_type,
+            name,
+            properties,
+            geometry
+        )
+        VALUES (
+            %s,
+            %s,
+            %s::jsonb,
+            {geometry_sql}
+        );
+        """,
+        (
+            asset_type,
+            name,
+            json.dumps(properties),
+            *geometry_parameters,
+        ),
+    )
+
+
+@app.post("/colony/generate-demo")
+def generate_demo_colony():
+
+    """
+    Replace the small development demo with a deterministic,
+    planned residential-colony dataset.
+
+    V1 creates:
+    - 50 cadastral plots
+    - 20 multi-storey apartment towers (all above 5 floors)
+    - 2 schools
+    - 1 office/community building
+    - 2 parks
+    - 1 common surface-parking area
+    - planned internal roads
+    - street-light points
+
+    Vertical apartment ownership volumes are intentionally left for
+    the next milestone so the colony overview remains lightweight.
+    """
+
+    # -----------------------------------------------------
+    # PLANNING CONSTANTS
+    # -----------------------------------------------------
+
+    base_lon = 77.20500
+    base_lat = 28.61150
+
+    plot_width = 0.00042
+    plot_height = 0.00034
+
+    vertical_road_width = 0.00010
+
+    horizontal_road_widths = [
+        0.00010,
+        0.00020,  # central/main avenue
+        0.00010,
+        0.00010,
+    ]
+
+    rows = 5
+    columns = 10
+
+    apartment_floors = [
+        6, 7, 8, 9, 10,
+        11, 12, 14, 16, 18,
+        20, 22, 24, 26, 28,
+        8, 12, 15, 18, 21,
+    ]
+
+    # 5 rows x 10 columns = exactly 50 cadastral plots.
+    # Counts:
+    # 20 apartment plots, 24 villa plots, 2 schools,
+    # 1 office, 2 parks and 1 common parking plot.
+
+    land_use_grid = [
+        [
+            "school", "villa", "villa", "apartment", "apartment",
+            "apartment", "villa", "villa", "villa", "villa",
+        ],
+        [
+            "villa", "villa", "apartment", "apartment", "park",
+            "apartment", "apartment", "villa", "villa", "villa",
+        ],
+        [
+            "office", "apartment", "apartment", "apartment", "villa",
+            "villa", "apartment", "apartment", "parking", "villa",
+        ],
+        [
+            "villa", "villa", "apartment", "apartment", "park",
+            "apartment", "apartment", "villa", "villa", "villa",
+        ],
+        [
+            "school", "villa", "villa", "apartment", "apartment",
+            "apartment", "apartment", "villa", "villa", "villa",
+        ],
+    ]
+
+    x_starts = []
+    current_x = base_lon
+
+    for column_index in range(columns):
+        x_starts.append(current_x)
+        current_x += plot_width
+
+        if column_index < columns - 1:
+            current_x += vertical_road_width
+
+    colony_max_lon = current_x
+
+    y_starts = []
+    current_y = base_lat
+
+    for row_index in range(rows):
+        y_starts.append(current_y)
+        current_y += plot_height
+
+        if row_index < rows - 1:
+            current_y += horizontal_road_widths[row_index]
+
+    colony_max_lat = current_y
+
+    plots = []
+
+    apartment_index = 0
+    villa_index = 0
+    school_index = 0
+    park_index = 0
+
+    try:
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                ensure_colony_assets_table(cursor)
+
+                # -----------------------------------------
+                # RESET CURRENT DEMO DATA
+                # -----------------------------------------
+
+                cursor.execute(
+                    "TRUNCATE TABLE properties RESTART IDENTITY;"
+                )
+
+                cursor.execute(
+                    "TRUNCATE TABLE imported_features RESTART IDENTITY;"
+                )
+
+                cursor.execute(
+                    "TRUNCATE TABLE parcels RESTART IDENTITY;"
+                )
+
+                cursor.execute(
+                    "TRUNCATE TABLE colony_assets RESTART IDENTITY;"
+                )
+
+                # -----------------------------------------
+                # 50 CADASTRAL PARCELS + LAND USE
+                # -----------------------------------------
+
+                parcel_number = 0
+
+                for row_index in range(rows):
+
+                    for column_index in range(columns):
+
+                        parcel_number += 1
+
+                        land_use = land_use_grid[row_index][column_index]
+
+                        min_lon = x_starts[column_index]
+                        min_lat = y_starts[row_index]
+                        max_lon = min_lon + plot_width
+                        max_lat = min_lat + plot_height
+
+                        ulpin = (
+                            f"RJ-JPR-COLONY-{parcel_number:04d}"
+                        )
+
+                        if land_use == "apartment":
+                            apartment_index += 1
+                            display_name = (
+                                f"Apartment Plot A{apartment_index:02d}"
+                            )
+
+                        elif land_use == "villa":
+                            villa_index += 1
+                            display_name = (
+                                f"Residential Plot V{villa_index:02d}"
+                            )
+
+                        elif land_use == "school":
+                            school_index += 1
+                            display_name = (
+                                f"School Plot S{school_index:02d}"
+                            )
+
+                        elif land_use == "park":
+                            park_index += 1
+                            display_name = (
+                                f"Public Park P{park_index:02d}"
+                            )
+
+                        elif land_use == "office":
+                            display_name = "Colony Office Plot"
+
+                        elif land_use == "parking":
+                            display_name = "Common Parking Plot"
+
+                        else:
+                            display_name = f"Plot {parcel_number:02d}"
+
+                        cursor.execute(
+                            """
+                            INSERT INTO parcels (
+                                ulpin,
+                                name,
+                                geometry
+                            )
+                            VALUES (
+                                %s,
+                                %s,
+                                ST_MakeEnvelope(
+                                    %s, %s, %s, %s, 4326
+                                )
+                            );
+                            """,
+                            (
+                                ulpin,
+                                display_name,
+                                min_lon,
+                                min_lat,
+                                max_lon,
+                                max_lat,
+                            ),
+                        )
+
+                        plots.append(
+                            {
+                                "number": parcel_number,
+                                "row": row_index,
+                                "column": column_index,
+                                "land_use": land_use,
+                                "ulpin": ulpin,
+                                "name": display_name,
+                                "min_lon": min_lon,
+                                "min_lat": min_lat,
+                                "max_lon": max_lon,
+                                "max_lat": max_lat,
+                            }
+                        )
+
+                # -----------------------------------------
+                # BUILDING FOOTPRINTS
+                # -----------------------------------------
+
+                apartment_counter = 0
+                school_counter = 0
+                building_feature_count = 0
+
+                for plot in plots:
+
+                    land_use = plot["land_use"]
+
+                    if land_use not in {
+                        "apartment",
+                        "school",
+                        "office",
+                    }:
+                        continue
+
+                    # Use deliberately different setbacks by use.
+                    if land_use == "apartment":
+                        inset_x = 0.000075
+                        inset_y = 0.000060
+
+                        apartment_counter += 1
+                        building_code = (
+                            f"B{apartment_counter:02d}"
+                        )
+                        floors = apartment_floors[
+                            apartment_counter - 1
+                        ]
+                        floor_height = 3.2
+                        units_per_floor = 4
+                        building_type = "Apartment Tower"
+                        feature_name = (
+                            f"Residential Tower {building_code}"
+                        )
+
+                    elif land_use == "school":
+                        inset_x = 0.000050
+                        inset_y = 0.000055
+
+                        school_counter += 1
+                        building_code = (
+                            f"SCH{school_counter:02d}"
+                        )
+                        floors = 3 if school_counter == 1 else 4
+                        floor_height = 3.6
+                        units_per_floor = 1
+                        building_type = "School"
+                        feature_name = (
+                            f"Community School {school_counter}"
+                        )
+
+                    else:
+                        inset_x = 0.000065
+                        inset_y = 0.000055
+
+                        building_code = "OFF01"
+                        floors = 8
+                        floor_height = 3.4
+                        units_per_floor = 1
+                        building_type = "Colony Office"
+                        feature_name = "Colony Administration Office"
+
+                    building_min_lon = plot["min_lon"] + inset_x
+                    building_min_lat = plot["min_lat"] + inset_y
+                    building_max_lon = plot["max_lon"] - inset_x
+                    building_max_lat = plot["max_lat"] - inset_y
+
+                    if land_use == "school":
+                        # Leave the western side open for the playground.
+                        building_min_lon = plot["min_lon"] + 0.000155
+                        building_max_lon = plot["max_lon"] - 0.000035
+
+                    height_m = floors * floor_height
+
+                    metadata = {
+                        "parent_ulpin": plot["ulpin"],
+                        "building_code": building_code,
+                        "building_type": building_type,
+                        "land_use": land_use,
+                        "floors": floors,
+                        "units_per_floor": units_per_floor,
+                        "floor_height": floor_height,
+                        "height_m": round(height_m, 2),
+                        "demo": "planned_colony_v1",
+                    }
+
+                    cursor.execute(
+                        """
+                        INSERT INTO imported_features (
+                            feature_type,
+                            name,
+                            source_filename,
+                            properties,
+                            geometry
+                        )
+                        VALUES (
+                            %s,
+                            %s,
+                            %s,
+                            %s::jsonb,
+                            ST_MakeEnvelope(
+                                %s, %s, %s, %s, 4326
+                            )
+                        );
+                        """,
+                        (
+                            building_type,
+                            feature_name,
+                            "bhumi3d_planned_colony_v1",
+                            json.dumps(metadata),
+                            building_min_lon,
+                            building_min_lat,
+                            building_max_lon,
+                            building_max_lat,
+                        ),
+                    )
+
+                    building_feature_count += 1
+
+                    # School playground beside the school block.
+                    if land_use == "school":
+
+                        playground_min_lon = (
+                            plot["min_lon"] + 0.000020
+                        )
+                        playground_max_lon = (
+                            plot["min_lon"] + 0.000120
+                        )
+                        playground_min_lat = (
+                            plot["min_lat"] + 0.000080
+                        )
+                        playground_max_lat = (
+                            plot["max_lat"] - 0.000080
+                        )
+
+                        _insert_colony_asset(
+                            cursor,
+                            "playground",
+                            f"School {school_counter} Playground",
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "surface": "sports_ground",
+                            },
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                playground_min_lon,
+                                playground_min_lat,
+                                playground_max_lon,
+                                playground_max_lat,
+                            ),
+                        )
+
+                # -----------------------------------------
+                # PARK + COMMON PARKING SURFACES
+                # -----------------------------------------
+
+                for plot in plots:
+
+                    if plot["land_use"] == "park":
+
+                        _insert_colony_asset(
+                            cursor,
+                            "park",
+                            plot["name"],
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "land_use": "Public Park",
+                            },
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                plot["min_lon"] + 0.000015,
+                                plot["min_lat"] + 0.000015,
+                                plot["max_lon"] - 0.000015,
+                                plot["max_lat"] - 0.000015,
+                            ),
+                        )
+
+                    if plot["land_use"] == "parking":
+
+                        _insert_colony_asset(
+                            cursor,
+                            "surface_parking",
+                            "Common Surface Parking",
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "capacity": 42,
+                                "land_use": "Common Parking",
+                            },
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                plot["min_lon"] + 0.000020,
+                                plot["min_lat"] + 0.000020,
+                                plot["max_lon"] - 0.000020,
+                                plot["max_lat"] - 0.000020,
+                            ),
+                        )
+
+                # -----------------------------------------
+                # ROAD NETWORK IN THE GAPS BETWEEN PLOTS
+                # -----------------------------------------
+
+                road_count = 0
+
+                for column_index in range(columns - 1):
+
+                    road_min_lon = (
+                        x_starts[column_index] + plot_width
+                    )
+                    road_max_lon = (
+                        road_min_lon + vertical_road_width
+                    )
+
+                    road_count += 1
+
+                    _insert_colony_asset(
+                        cursor,
+                        "road",
+                        f"Residential Street {column_index + 1}",
+                        {
+                            "road_class": "Internal Street",
+                            "nominal_width_m": 10,
+                        },
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (
+                            road_min_lon,
+                            base_lat,
+                            road_max_lon,
+                            colony_max_lat,
+                        ),
+                    )
+
+                for row_index in range(rows - 1):
+
+                    road_min_lat = (
+                        y_starts[row_index] + plot_height
+                    )
+                    road_max_lat = (
+                        road_min_lat
+                        + horizontal_road_widths[row_index]
+                    )
+
+                    is_main_avenue = row_index == 1
+
+                    road_count += 1
+
+                    _insert_colony_asset(
+                        cursor,
+                        "road",
+                        (
+                            "Central Avenue"
+                            if is_main_avenue
+                            else f"Cross Street {row_index + 1}"
+                        ),
+                        {
+                            "road_class": (
+                                "Main Avenue"
+                                if is_main_avenue
+                                else "Collector Street"
+                            ),
+                            "nominal_width_m": (
+                                20
+                                if is_main_avenue
+                                else 10
+                            ),
+                        },
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (
+                            base_lon,
+                            road_min_lat,
+                            colony_max_lon,
+                            road_max_lat,
+                        ),
+                    )
+
+                # Main entrance road just south of the colony.
+                colony_center_lon = (
+                    base_lon + colony_max_lon
+                ) / 2
+
+                entrance_half_width = 0.000060
+
+                _insert_colony_asset(
+                    cursor,
+                    "road",
+                    "Main Colony Entrance",
+                    {
+                        "road_class": "Entrance Boulevard",
+                        "nominal_width_m": 12,
+                    },
+                    "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                    (
+                        colony_center_lon - entrance_half_width,
+                        base_lat - 0.000240,
+                        colony_center_lon + entrance_half_width,
+                        base_lat,
+                    ),
+                )
+
+                road_count += 1
+
+                # -----------------------------------------
+                # STREET LIGHTS
+                # -----------------------------------------
+
+                light_count = 0
+
+                # Lights along each horizontal corridor.
+                for row_index in range(rows - 1):
+
+                    road_center_lat = (
+                        y_starts[row_index]
+                        + plot_height
+                        + horizontal_road_widths[row_index] / 2
+                    )
+
+                    for column_index in range(columns):
+
+                        light_lon = (
+                            x_starts[column_index]
+                            + plot_width / 2
+                        )
+
+                        light_count += 1
+
+                        _insert_colony_asset(
+                            cursor,
+                            "streetlight",
+                            f"Street Light L{light_count:03d}",
+                            {
+                                "height_m": 8.0,
+                                "status": "planned",
+                            },
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (
+                                light_lon,
+                                road_center_lat,
+                            ),
+                        )
+
+                # Lights along each north-south street.
+                for column_index in range(columns - 1):
+
+                    road_center_lon = (
+                        x_starts[column_index]
+                        + plot_width
+                        + vertical_road_width / 2
+                    )
+
+                    for row_index in range(rows):
+
+                        light_lat = (
+                            y_starts[row_index]
+                            + plot_height / 2
+                        )
+
+                        light_count += 1
+
+                        _insert_colony_asset(
+                            cursor,
+                            "streetlight",
+                            f"Street Light L{light_count:03d}",
+                            {
+                                "height_m": 8.0,
+                                "status": "planned",
+                            },
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (
+                                road_center_lon,
+                                light_lat,
+                            ),
+                        )
+
+                # A few lights on the entrance approach.
+                for step in range(4):
+
+                    light_count += 1
+
+                    _insert_colony_asset(
+                        cursor,
+                        "streetlight",
+                        f"Street Light L{light_count:03d}",
+                        {
+                            "height_m": 9.0,
+                            "status": "planned",
+                        },
+                        "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                        (
+                            colony_center_lon,
+                            base_lat
+                            - 0.000045
+                            - step * 0.000050,
+                        ),
+                    )
+
+        return {
+            "success": True,
+            "message": "Planned Bhumi3D colony generated successfully",
+            "version": "planned_colony_v1",
+            "plot_count": 50,
+            "apartment_plot_count": 20,
+            "villa_plot_count": 24,
+            "school_count": 2,
+            "office_count": 1,
+            "park_count": 2,
+            "parking_count": 1,
+            "apartment_building_count": 20,
+            "building_feature_count": building_feature_count,
+            "road_count": road_count,
+            "streetlight_count": light_count,
+            "apartment_floor_total": sum(apartment_floors),
+            "highest_apartment_floors": max(apartment_floors),
+            "note": (
+                "Apartment ownership volumes are generated in the "
+                "next vertical-colony milestone."
+            ),
+        }
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Colony generation error: {error}",
+        )
 
 
 # =========================================================

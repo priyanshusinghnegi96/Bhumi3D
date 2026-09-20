@@ -129,3 +129,23 @@ export async function generateBatchBuildings(batchData) {
 
   return data;
 }
+export async function getColonyAssets() {
+  const response = await fetch(`${API_BASE_URL}/colony/assets`);
+  if (!response.ok) throw new Error("Could not load colony assets");
+  return await response.json();
+}
+
+export async function generateDemoColony() {
+  const response = await fetch(`${API_BASE_URL}/colony/generate-demo`, {
+    method: "POST",
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.detail || "Could not generate demo colony");
+  }
+
+  return data;
+}
+

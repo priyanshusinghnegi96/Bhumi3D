@@ -11,6 +11,7 @@ import {
   generateVerticalParcels,
   generateBatchBuildings,
   createBuilding,
+  generateDemoColony,
 } from "./services/api";
 
 function buildHierarchy(scene, gisData) {
@@ -31,6 +32,8 @@ function buildHierarchy(scene, gisData) {
           code: buildingCode,
           name: feature.name || `Building ${buildingCode}`,
           featureId: feature.id,
+          plannedFloors: Number(feature.properties?.floors || 0),
+          buildingType: feature.properties?.building_type || "Building",
         });
       }
     }
@@ -60,7 +63,8 @@ function buildHierarchy(scene, gisData) {
 
       return {
         ...building,
-        floorCount: floors.length,
+        floorCount:
+          floors.length > 0 ? floors.length : building.plannedFloors,
         propertyCount: properties.length,
         apartmentCount: apartments.length,
         floors,
@@ -130,6 +134,9 @@ function App() {
   const [layers, setLayers] = useState({
     parcels: true,
     buildings: true,
+    roads: true,
+    amenities: true,
+    lights: true,
     apartments: true,
     parking: true,
     utilities: true,
@@ -155,6 +162,9 @@ function App() {
 
   const [importMessage, setImportMessage] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+
+  const [colonyMessage, setColonyMessage] = useState("");
+  const [isGeneratingColony, setIsGeneratingColony] = useState(false);
 
   const [footprintPicking, setFootprintPicking] = useState(false);
   const [footprintPickTrigger, setFootprintPickTrigger] = useState(0);
@@ -476,6 +486,42 @@ function App() {
     }
   }
 
+  async function handleGenerateDemoColony() {
+    const confirmed = window.confirm(
+      "Generate the planned 50-plot Bhumi3D colony?\n\n" +
+        "This replaces the current demo parcels, buildings and 3D properties. " +
+        "Your code is not changed."
+    );
+
+    if (!confirmed) return;
+
+    setIsGeneratingColony(true);
+    setColonyMessage("Generating planned residential colony...");
+
+    try {
+      const result = await generateDemoColony();
+
+      setBackendConnected(true);
+      setValidationResult(null);
+      setSelectedProperty(null);
+      setSearchResults([]);
+      setSearchMessage("");
+
+      setColonyMessage(
+        `✓ Colony ready: ${result.plot_count} plots, ` +
+          `${result.apartment_building_count} apartment towers, ` +
+          `${result.road_count} roads and ${result.streetlight_count} street lights.`
+      );
+
+      setSceneVersion((value) => value + 1);
+    } catch (error) {
+      setBackendConnected(false);
+      setColonyMessage(error.message || "Could not generate colony.");
+    } finally {
+      setIsGeneratingColony(false);
+    }
+  }
+
   async function openVerticalGenerator() {
     setShowVerticalGenerator(true);
     setGenerationMessage("");
@@ -712,6 +758,14 @@ function App() {
           </label>
 
           <button
+            className="header-button colony-button"
+            onClick={handleGenerateDemoColony}
+            disabled={isGeneratingColony}
+          >
+            {isGeneratingColony ? "Generating Colony..." : "Generate Colony"}
+          </button>
+
+          <button
             className="header-button"
             onClick={openBuildingCreator}
           >
@@ -756,8 +810,10 @@ function App() {
         </div>
       </header>
 
-      {importMessage && (
-        <div className="global-message">{importMessage}</div>
+      {(importMessage || colonyMessage) && (
+        <div className="global-message">
+          {colonyMessage || importMessage}
+        </div>
       )}
 
       <main className="workspace">
@@ -847,6 +903,9 @@ function App() {
             {[
               ["parcels", "Land Plots"],
               ["buildings", "Buildings / GIS"],
+              ["roads", "Road Network"],
+              ["amenities", "Parks / Parking / Playgrounds"],
+              ["lights", "Street Lights"],
               ["apartments", "Apartments"],
               ["parking", "Basement Parking"],
               ["utilities", "Underground Utility"],
@@ -933,6 +992,21 @@ function App() {
               <span className="legend purple" />
               Building Footprint
             </div>
+            <div className="legend-item">
+              <span className="legend road" />
+              Road Network
+            </div>
+
+            <div className="legend-item">
+              <span className="legend park" />
+              Parks / Amenities
+            </div>
+
+            <div className="legend-item">
+              <span className="legend light" />
+              Street Lights
+            </div>
+
 
             <div className="legend-item">
               <span className="legend red" />

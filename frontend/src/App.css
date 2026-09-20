@@ -1386,3 +1386,29 @@ select {
 
   font-weight: 800;
 }
+
+/* =========================================================
+   PLANNED COLONY GENERATOR
+   ========================================================= */
+
+.colony-button {
+  background: #6fbf73;
+}
+
+.header-button:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.legend.road {
+  background: #474c52;
+}
+
+.legend.park {
+  background: #5aa469;
+}
+
+.legend.light {
+  background: #ffe58a;
+  border: 1px solid #9d8735;
+}
