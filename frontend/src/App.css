@@ -1304,3 +1304,31 @@ select {
     min-width: 68px;
   }
 }
+/* =========================================================
+   BUILDING CREATOR
+   ========================================================= */
+
+.building-footprint-summary {
+  padding: 10px 12px;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 3px;
+
+  border: 1px solid #d7dfdb;
+  border-radius: 6px;
+
+  background: #f7faf8;
+
+  color: #526159;
+
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.building-footprint-summary strong {
+  color: #174c36;
+
+  font-size: 11px;
+}

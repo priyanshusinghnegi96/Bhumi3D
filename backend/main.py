@@ -49,7 +49,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="0.7.1",
+    version="0.8.0",
 )
 
 
@@ -138,6 +138,36 @@ class VerticalGenerationRequest(BaseModel):
     )
 
 
+class BuildingCreateRequest(BaseModel):
+
+    parent_ulpin: str
+
+    building_code: str
+
+    floors: int = Field(
+        default=4,
+        ge=1,
+        le=100,
+    )
+
+    units_per_floor: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+    )
+
+    floor_height: float = Field(
+        default=3.2,
+        gt=0,
+        le=20,
+    )
+
+    min_lon: float
+    min_lat: float
+    max_lon: float
+    max_lat: float
+
+
 # =========================================================
 # HOME
 # =========================================================
@@ -149,7 +179,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "0.7.1",
+        "version": "0.8.0",
     }
 
 
@@ -1284,6 +1314,316 @@ def get_gis_features():
         "features":
             features,
     }
+
+
+# =========================================================
+# VISUAL BUILDING CREATOR
+# =========================================================
+
+@app.post("/buildings/create")
+def create_building(request: BuildingCreateRequest):
+
+    """
+    Create one rectangular building footprint directly from
+    the Bhumi3D map and generate its apartment volumes.
+
+    The user selects two opposite corners in Cesium. The
+    backend validates the footprint against the selected
+    parent parcel, stores it as a GIS building feature, and
+    creates the requested floors and units in one transaction.
+    """
+
+    building_code = request.building_code.strip().upper()
+    parent_ulpin = request.parent_ulpin.strip()
+
+    if not building_code:
+        raise HTTPException(
+            status_code=400,
+            detail="Building code cannot be empty",
+        )
+
+    if not parent_ulpin:
+        raise HTTPException(
+            status_code=400,
+            detail="Parent ULPIN cannot be empty",
+        )
+
+    if request.max_lon <= request.min_lon:
+        raise HTTPException(
+            status_code=400,
+            detail="max_lon must be greater than min_lon",
+        )
+
+    if request.max_lat <= request.min_lat:
+        raise HTTPException(
+            status_code=400,
+            detail="max_lat must be greater than min_lat",
+        )
+
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+
+                # -----------------------------------------
+                # VERIFY PARENT AND FOOTPRINT CONTAINMENT
+                # -----------------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT
+                        name,
+                        ST_CoveredBy(
+                            ST_MakeEnvelope(
+                                %s, %s, %s, %s, 4326
+                            ),
+                            geometry
+                        )
+                    FROM parcels
+                    WHERE ulpin = %s;
+                    """,
+                    (
+                        request.min_lon,
+                        request.min_lat,
+                        request.max_lon,
+                        request.max_lat,
+                        parent_ulpin,
+                    ),
+                )
+
+                parent = cursor.fetchone()
+
+                if parent is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Parent ULPIN does not exist",
+                    )
+
+                if not bool(parent[1]):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Building footprint must be completely "
+                            "inside the selected parent land plot"
+                        ),
+                    )
+
+                # -----------------------------------------
+                # PREVENT DUPLICATE BUILDING CODES
+                # -----------------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM properties
+                    WHERE parent_ulpin = %s
+                      AND building = %s;
+                    """,
+                    (parent_ulpin, building_code),
+                )
+
+                property_count = cursor.fetchone()[0]
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM imported_features
+                    WHERE properties ->> 'parent_ulpin' = %s
+                      AND UPPER(properties ->> 'building_code') = %s;
+                    """,
+                    (parent_ulpin, building_code),
+                )
+
+                feature_count = cursor.fetchone()[0]
+
+                if property_count > 0 or feature_count > 0:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Building {building_code} already exists "
+                            f"on {parent_ulpin}"
+                        ),
+                    )
+
+                # -----------------------------------------
+                # STORE BUILDING FOOTPRINT
+                # -----------------------------------------
+
+                metadata = {
+                    "name": f"Building {building_code}",
+                    "feature_type": "Building Footprint",
+                    "building_code": building_code,
+                    "parent_ulpin": parent_ulpin,
+                    "floors": request.floors,
+                    "units_per_floor": request.units_per_floor,
+                    "floor_height": request.floor_height,
+                    "height_m": request.floors * request.floor_height,
+                    "source": "Bhumi3D Building Creator",
+                }
+
+                cursor.execute(
+                    """
+                    INSERT INTO imported_features (
+                        feature_type,
+                        name,
+                        source_filename,
+                        properties,
+                        geometry
+                    )
+                    VALUES (
+                        'Building Footprint',
+                        %s,
+                        'Bhumi3D Building Creator',
+                        %s::jsonb,
+                        ST_MakeEnvelope(
+                            %s, %s, %s, %s, 4326
+                        )
+                    )
+                    RETURNING id;
+                    """,
+                    (
+                        f"Building {building_code}",
+                        json.dumps(metadata),
+                        request.min_lon,
+                        request.min_lat,
+                        request.max_lon,
+                        request.max_lat,
+                    ),
+                )
+
+                feature_id = cursor.fetchone()[0]
+
+                # -----------------------------------------
+                # REGULAR UNIT GRID
+                # -----------------------------------------
+
+                columns = math.ceil(
+                    math.sqrt(request.units_per_floor)
+                )
+
+                rows = math.ceil(
+                    request.units_per_floor / columns
+                )
+
+                cell_width = (
+                    request.max_lon - request.min_lon
+                ) / columns
+
+                cell_height = (
+                    request.max_lat - request.min_lat
+                ) / rows
+
+                created = []
+
+                for floor_number in range(1, request.floors + 1):
+                    floor_code = str(floor_number).zfill(2)
+                    z_min = (floor_number - 1) * request.floor_height
+                    z_max = floor_number * request.floor_height
+
+                    for unit_index in range(
+                        1,
+                        request.units_per_floor + 1,
+                    ):
+                        grid_index = unit_index - 1
+                        row_index = grid_index // columns
+                        column_index = grid_index % columns
+
+                        unit_min_lon = (
+                            request.min_lon
+                            + column_index * cell_width
+                        )
+                        unit_max_lon = unit_min_lon + cell_width
+                        unit_min_lat = (
+                            request.min_lat
+                            + row_index * cell_height
+                        )
+                        unit_max_lat = unit_min_lat + cell_height
+
+                        unit_code = (
+                            f"{floor_number}{unit_index:02d}"
+                        )
+
+                        cursor.execute(
+                            """
+                            INSERT INTO properties (
+                                property_type,
+                                parent_ulpin,
+                                building,
+                                floor,
+                                unit,
+                                z_min,
+                                z_max,
+                                validation,
+                                footprint
+                            )
+                            VALUES (
+                                'Apartment',
+                                %s,
+                                %s,
+                                %s,
+                                %s,
+                                %s,
+                                %s,
+                                'Not checked',
+                                ST_MakeEnvelope(
+                                    %s, %s, %s, %s, 4326
+                                )
+                            )
+                            RETURNING property_id, unit;
+                            """,
+                            (
+                                parent_ulpin,
+                                building_code,
+                                floor_code,
+                                unit_code,
+                                z_min,
+                                z_max,
+                                unit_min_lon,
+                                unit_min_lat,
+                                unit_max_lon,
+                                unit_max_lat,
+                            ),
+                        )
+
+                        inserted = cursor.fetchone()
+
+                        created.append(
+                            {
+                                "property_id": inserted[0],
+                                "unit": inserted[1],
+                                "floor": floor_code,
+                                "z_min": z_min,
+                                "z_max": z_max,
+                            }
+                        )
+
+        return {
+            "success": True,
+            "message": "Building created successfully",
+            "feature_id": feature_id,
+            "parent_ulpin": parent_ulpin,
+            "plot_name": parent[0],
+            "building": building_code,
+            "floors": request.floors,
+            "units_per_floor": request.units_per_floor,
+            "floor_height": request.floor_height,
+            "generated_property_count": len(created),
+            "properties": created,
+        }
+
+    except HTTPException:
+        raise
+
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail="A generated spatial ID already exists",
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
 
 
 # =========================================================

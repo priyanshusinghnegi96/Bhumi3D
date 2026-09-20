@@ -76,6 +76,24 @@ export async function getGISFeatures() {
   return await response.json();
 }
 
+export async function createBuilding(buildingData) {
+  const response = await fetch(`${API_BASE_URL}/buildings/create`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(buildingData),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.detail || "Could not create building");
+  }
+
+  return data;
+}
+
 export async function generateVerticalParcels(generationData) {
   const response = await fetch(`${API_BASE_URL}/generate/vertical-parcels`, {
     method: "POST",

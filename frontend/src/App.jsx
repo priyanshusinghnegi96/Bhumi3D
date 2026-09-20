@@ -10,6 +10,7 @@ import {
   getScene,
   generateVerticalParcels,
   generateBatchBuildings,
+  createBuilding,
 } from "./services/api";
 
 function buildHierarchy(scene, gisData) {
@@ -142,6 +143,12 @@ function App() {
   const [footprintPicking, setFootprintPicking] = useState(false);
   const [footprintPickTrigger, setFootprintPickTrigger] = useState(0);
   const [footprintCancelTrigger, setFootprintCancelTrigger] = useState(0);
+  const [footprintTarget, setFootprintTarget] = useState("property");
+
+  const [showBuildingCreator, setShowBuildingCreator] = useState(false);
+  const [isCreatingBuilding, setIsCreatingBuilding] = useState(false);
+  const [buildingMessage, setBuildingMessage] = useState("");
+  const [buildingResult, setBuildingResult] = useState(null);
 
   const [showVerticalGenerator, setShowVerticalGenerator] = useState(false);
   const [gisFeatures, setGISFeatures] = useState([]);
@@ -182,6 +189,18 @@ function App() {
     default_floors: "4",
     default_units_per_floor: "4",
     default_floor_height: "3.2",
+  });
+
+  const [buildingForm, setBuildingForm] = useState({
+    parent_ulpin: "RJ-JPR-DEMO-0001",
+    building_code: "B05",
+    floors: "4",
+    units_per_floor: "4",
+    floor_height: "3.2",
+    min_lon: "",
+    min_lat: "",
+    max_lon: "",
+    max_lat: "",
   });
 
   useEffect(() => {
@@ -308,13 +327,37 @@ function App() {
   }
 
   function startFootprintPicking() {
+    setFootprintTarget("property");
     setCreateMessage("");
     setShowAddProperty(false);
     setFootprintPicking(true);
     setFootprintPickTrigger((value) => value + 1);
   }
 
+  function startBuildingFootprintPicking() {
+    setFootprintTarget("building");
+    setBuildingMessage("");
+    setShowBuildingCreator(false);
+    setFootprintPicking(true);
+    setFootprintPickTrigger((value) => value + 1);
+  }
+
   function handleFootprintPicked(bounds) {
+    if (footprintTarget === "building") {
+      setBuildingForm((previous) => ({
+        ...previous,
+        min_lon: bounds.minLon.toFixed(7),
+        min_lat: bounds.minLat.toFixed(7),
+        max_lon: bounds.maxLon.toFixed(7),
+        max_lat: bounds.maxLat.toFixed(7),
+      }));
+
+      setFootprintPicking(false);
+      setBuildingMessage("✓ Building footprint selected from the 3D map.");
+      setShowBuildingCreator(true);
+      return;
+    }
+
     setForm((previous) => ({
       ...previous,
       min_lon: bounds.minLon.toFixed(7),
@@ -331,7 +374,12 @@ function App() {
   function cancelFootprintPicking() {
     setFootprintPicking(false);
     setFootprintCancelTrigger((value) => value + 1);
-    setShowAddProperty(true);
+
+    if (footprintTarget === "building") {
+      setShowBuildingCreator(true);
+    } else {
+      setShowAddProperty(true);
+    }
   }
 
   async function handleCreateProperty(event) {
@@ -479,6 +527,76 @@ function App() {
     }
   }
 
+  function openBuildingCreator() {
+    const firstPlot = hierarchy.plots[0];
+
+    setBuildingMessage("");
+    setBuildingResult(null);
+
+    if (firstPlot) {
+      setBuildingForm((previous) => ({
+        ...previous,
+        parent_ulpin: previous.parent_ulpin || firstPlot.ulpin,
+      }));
+    }
+
+    setShowBuildingCreator(true);
+  }
+
+  function handleBuildingFormChange(event) {
+    const { name, value } = event.target;
+
+    setBuildingForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+  }
+
+  async function handleCreateBuilding(event) {
+    event.preventDefault();
+
+    if (
+      buildingForm.min_lon === "" ||
+      buildingForm.min_lat === "" ||
+      buildingForm.max_lon === "" ||
+      buildingForm.max_lat === ""
+    ) {
+      setBuildingMessage(
+        "Pick the building footprint on the map before generating."
+      );
+      return;
+    }
+
+    setIsCreatingBuilding(true);
+    setBuildingMessage("Creating building and vertical properties...");
+    setBuildingResult(null);
+
+    try {
+      const result = await createBuilding({
+        parent_ulpin: buildingForm.parent_ulpin,
+        building_code: buildingForm.building_code,
+        floors: Number(buildingForm.floors),
+        units_per_floor: Number(buildingForm.units_per_floor),
+        floor_height: Number(buildingForm.floor_height),
+        min_lon: Number(buildingForm.min_lon),
+        min_lat: Number(buildingForm.min_lat),
+        max_lon: Number(buildingForm.max_lon),
+        max_lat: Number(buildingForm.max_lat),
+      });
+
+      setBackendConnected(true);
+      setBuildingResult(result);
+      setBuildingMessage(
+        `✓ ${result.building} created with ${result.generated_property_count} 3D properties.`
+      );
+      setSceneVersion((value) => value + 1);
+    } catch (error) {
+      setBuildingMessage(error.message || "Could not create building.");
+    } finally {
+      setIsCreatingBuilding(false);
+    }
+  }
+
   function openBatchGenerator() {
     setBatchMessage("");
     setBatchResult(null);
@@ -555,6 +673,13 @@ function App() {
               hidden
             />
           </label>
+
+          <button
+            className="header-button"
+            onClick={openBuildingCreator}
+          >
+            + Add Building
+          </button>
 
           <button
             className="header-button"
@@ -810,10 +935,14 @@ function App() {
 
           {footprintPicking && (
             <div className="map-instruction">
-              <strong>Select Property Footprint</strong>
+              <strong>
+                {footprintTarget === "building"
+                  ? "Select Building Footprint"
+                  : "Select Property Footprint"}
+              </strong>
 
               <span>
-                Click the first corner, then the opposite corner.
+                Click one corner, then click the opposite corner.
               </span>
 
               <button type="button" onClick={cancelFootprintPicking}>
@@ -828,6 +957,163 @@ function App() {
           hierarchy={hierarchy}
         />
       </main>
+
+      {showBuildingCreator && (
+        <div className="modal-backdrop">
+          <div className="property-modal vertical-modal">
+            <div className="modal-header">
+              <div>
+                <h2>Create 3D Building</h2>
+                <p>
+                  Draw a building footprint, choose its parent plot, and
+                  generate floors and apartment units automatically.
+                </p>
+              </div>
+
+              <button
+                className="close-button"
+                type="button"
+                onClick={() => setShowBuildingCreator(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <form
+              className="property-form"
+              onSubmit={handleCreateBuilding}
+            >
+              <div className="prototype-notice">
+                <strong>Bhumi3D Building Creator V1</strong>
+                <span>
+                  V1 uses a rectangular footprint selected with two
+                  opposite map corners. Bhumi3D validates that the whole
+                  building stays inside its selected parent plot.
+                </span>
+              </div>
+
+              <label>
+                Parent Land Plot
+                <select
+                  name="parent_ulpin"
+                  value={buildingForm.parent_ulpin}
+                  onChange={handleBuildingFormChange}
+                  required
+                >
+                  {hierarchy.plots.map((plot) => (
+                    <option key={plot.ulpin} value={plot.ulpin}>
+                      {plot.name} — {plot.ulpin}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="form-grid">
+                <label>
+                  Building Code
+                  <input
+                    name="building_code"
+                    value={buildingForm.building_code}
+                    onChange={handleBuildingFormChange}
+                    placeholder="B05"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Floors
+                  <input
+                    name="floors"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={buildingForm.floors}
+                    onChange={handleBuildingFormChange}
+                    required
+                  />
+                </label>
+
+                <label>
+                  Units / Floor
+                  <input
+                    name="units_per_floor"
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={buildingForm.units_per_floor}
+                    onChange={handleBuildingFormChange}
+                    required
+                  />
+                </label>
+
+                <label>
+                  Floor Height (m)
+                  <input
+                    name="floor_height"
+                    type="number"
+                    min="0.1"
+                    max="20"
+                    step="0.1"
+                    value={buildingForm.floor_height}
+                    onChange={handleBuildingFormChange}
+                    required
+                  />
+                </label>
+              </div>
+
+              <button
+                type="button"
+                className="map-pick-button"
+                onClick={startBuildingFootprintPicking}
+              >
+                Pick Building Footprint on 3D Map
+              </button>
+
+              <div className="building-footprint-summary">
+                {buildingForm.min_lon === "" ? (
+                  <span>No footprint selected yet.</span>
+                ) : (
+                  <>
+                    <strong>Footprint selected</strong>
+                    <span>
+                      {buildingForm.min_lon}, {buildingForm.min_lat}
+                    </span>
+                    <span>
+                      to {buildingForm.max_lon}, {buildingForm.max_lat}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {buildingMessage && (
+                <div className="form-message">{buildingMessage}</div>
+              )}
+
+              {buildingResult && (
+                <div className="generation-result">
+                  <strong>Building Created</strong>
+                  <div>Building: {buildingResult.building}</div>
+                  <div>Parent: {buildingResult.parent_ulpin}</div>
+                  <div>Floors: {buildingResult.floors}</div>
+                  <div>
+                    3D properties: {buildingResult.generated_property_count}
+                  </div>
+                </div>
+              )}
+
+              <button
+                className="primary-form-button"
+                type="submit"
+                disabled={isCreatingBuilding}
+              >
+                {isCreatingBuilding
+                  ? "Creating Building..."
+                  : "Generate Building & Properties"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showAddProperty && (
         <div className="modal-backdrop">
