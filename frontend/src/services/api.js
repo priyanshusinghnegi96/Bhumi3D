@@ -149,3 +149,5 @@ export async function generateDemoColony() {
   return data;
 }
 
+
+// Township V3 Step 3.3 uses the same colony API contract with richer architecture and streetscape metadata.

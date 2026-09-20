@@ -1412,3 +1412,93 @@ select {
   background: #ffe58a;
   border: 1px solid #9d8735;
 }
+
+
+/* =========================================================
+   TOWNSHIP V3 STEP 2 - CAMERA + ROAD INFRASTRUCTURE
+   ========================================================= */
+
+.camera-controls {
+  position: absolute;
+  top: 76px;
+  right: 14px;
+  z-index: 55;
+
+  width: min(470px, calc(100% - 28px));
+  padding: 8px;
+
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+
+  background: rgba(13, 56, 40, 0.90);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(5px);
+}
+
+.camera-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.camera-controls button {
+  min-height: 30px;
+  padding: 6px 9px;
+
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  border-radius: 5px;
+
+  background: rgba(255, 255, 255, 0.10);
+  color: white;
+
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.camera-controls button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.20);
+}
+
+.camera-controls button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.camera-controls .focus-building-button {
+  background: rgba(228, 183, 55, 0.22);
+  border-color: rgba(228, 183, 55, 0.48);
+}
+
+.camera-help {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.legend.marking {
+  background: #ffffff;
+  border: 1px solid #7f8783;
+}
+
+.legend.signal {
+  background: #ef4444;
+  border: 1px solid #7a1c1c;
+}
+
+
+.legend.landscape {
+  background: #4f7d46;
+  border: 1px solid #2d4c29;
+}
+
+
+/* STEP 3.2 VIEW MODES */
+.view-mode-row { display:flex; gap:7px; margin-bottom:7px; }
+.view-mode-button { min-width:98px; border:1px solid rgba(255,255,255,.28)!important; background:rgba(255,255,255,.08)!important; color:#eef7f2!important; }
+.view-mode-button.active { background:#e4b737!important; color:#17221d!important; border-color:#e4b737!important; box-shadow:0 0 0 2px rgba(228,183,55,.16); }

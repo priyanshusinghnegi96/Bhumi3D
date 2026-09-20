@@ -136,7 +136,10 @@ function App() {
     buildings: true,
     roads: true,
     amenities: true,
+    landscape: true,
     lights: true,
+    markings: true,
+    signals: true,
     apartments: true,
     parking: true,
     utilities: true,
@@ -155,6 +158,31 @@ function App() {
   const [validationResult, setValidationResult] = useState(null);
 
   const [sceneVersion, setSceneVersion] = useState(0);
+
+  const [cameraCommand, setCameraCommand] = useState({
+    action: "township",
+    sequence: 0,
+  });
+
+  const [viewMode, setViewMode] = useState("city");
+
+  function applyCityView() {
+    setViewMode("city");
+    setLayers((previous) => ({
+      ...previous, parcels: false, buildings: true, roads: true, amenities: true,
+      landscape: true, lights: true, markings: true, signals: true,
+      apartments: false, parking: true, utilities: true,
+    }));
+  }
+
+  function applyCadastralView() {
+    setViewMode("cadastral");
+    setLayers((previous) => ({
+      ...previous, parcels: true, buildings: true, roads: true, amenities: false,
+      landscape: false, lights: false, markings: false, signals: false,
+      apartments: true, parking: true, utilities: true,
+    }));
+  }
 
   const [showAddProperty, setShowAddProperty] = useState(false);
   const [createMessage, setCreateMessage] = useState("");
@@ -190,6 +218,14 @@ function App() {
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [batchMessage, setBatchMessage] = useState("");
   const [batchResult, setBatchResult] = useState(null);
+
+  function sendCameraCommand(action, payload = {}) {
+    setCameraCommand((previous) => ({
+      action,
+      sequence: previous.sequence + 1,
+      ...payload,
+    }));
+  }
 
   const [form, setForm] = useState({
     property_type: "Apartment",
@@ -488,7 +524,7 @@ function App() {
 
   async function handleGenerateDemoColony() {
     const confirmed = window.confirm(
-      "Generate the planned 50-plot Bhumi3D colony?\n\n" +
+      "Generate Bhumi3D Township V3 Step 3.3 architecture and streetscape realism upgrade?\n\n" +
         "This replaces the current demo parcels, buildings and 3D properties. " +
         "Your code is not changed."
     );
@@ -496,7 +532,7 @@ function App() {
     if (!confirmed) return;
 
     setIsGeneratingColony(true);
-    setColonyMessage("Generating planned residential colony...");
+    setColonyMessage("Generating Township V3 Step 3.3 architecture + streetscape upgrade...");
 
     try {
       const result = await generateDemoColony();
@@ -508,9 +544,12 @@ function App() {
       setSearchMessage("");
 
       setColonyMessage(
-        `✓ Colony ready: ${result.plot_count} plots, ` +
+        `✓ Township ready: ${result.plot_count} plots, ` +
           `${result.apartment_building_count} apartment towers, ` +
-          `${result.road_count} roads and ${result.streetlight_count} street lights.`
+          `${result.residential_building_count} homes, ` +
+          `${result.hospital_count} hospitals, ${result.road_count} roads, ` +
+          `${result.tree_count} landscape trees, ${result.park_bench_count || 0} park benches, ` +
+          `perimeter green belts and the ${result.entrance_name} entrance.`
       );
 
       setSceneVersion((value) => value + 1);
@@ -762,7 +801,7 @@ function App() {
             onClick={handleGenerateDemoColony}
             disabled={isGeneratingColony}
           >
-            {isGeneratingColony ? "Generating Colony..." : "Generate Colony"}
+            {isGeneratingColony ? "Generating Township..." : "Generate Township"}
           </button>
 
           <button
@@ -904,8 +943,11 @@ function App() {
               ["parcels", "Land Plots"],
               ["buildings", "Buildings / GIS"],
               ["roads", "Road Network"],
-              ["amenities", "Parks / Parking / Playgrounds"],
-              ["lights", "Street Lights"],
+              ["amenities", "Parks / Parking / Civic Spaces"],
+              ["landscape", "Trees / Landscape / Entrance"],
+              ["markings", "Road Markings / Crossings"],
+              ["signals", "Traffic Signals"],
+              ["lights", "Modern Street Lights"],
               ["apartments", "Apartments"],
               ["parking", "Basement Parking"],
               ["utilities", "Underground Utility"],
@@ -1003,10 +1045,24 @@ function App() {
             </div>
 
             <div className="legend-item">
-              <span className="legend light" />
-              Street Lights
+              <span className="legend landscape" />
+              Trees / Landscape / Entrance
             </div>
 
+            <div className="legend-item">
+              <span className="legend marking" />
+              Road Markings
+            </div>
+
+            <div className="legend-item">
+              <span className="legend signal" />
+              Traffic Signals
+            </div>
+
+            <div className="legend-item">
+              <span className="legend light" />
+              Modern Street Lights
+            </div>
 
             <div className="legend-item">
               <span className="legend red" />
@@ -1029,10 +1085,44 @@ function App() {
             />
           </div>
 
+          <div className="camera-controls">
+            <div className="view-mode-row">
+              <button className={viewMode === "city" ? "view-mode-button active" : "view-mode-button"} onClick={applyCityView}>
+                City View
+              </button>
+              <button className={viewMode === "cadastral" ? "view-mode-button active" : "view-mode-button"} onClick={applyCadastralView}>
+                Cadastral View
+              </button>
+            </div>
+            <div className="camera-controls-row">
+              <button onClick={() => sendCameraCommand("township")}>Township</button>
+              <button onClick={() => sendCameraCommand("top")}>Top</button>
+              <button onClick={() => sendCameraCommand("street")}>Street</button>
+              <button
+                className="focus-building-button"
+                disabled={!selectedProperty?.building || selectedProperty.building === "—"}
+                onClick={() =>
+                  sendCameraCommand("focusBuilding", {
+                    parentUlpIn: selectedProperty?.parentUlpIn,
+                    building: selectedProperty?.building,
+                  })
+                }
+              >
+                Focus Selected
+              </button>
+              <button onClick={() => sendCameraCommand("reset")}>Reset</button>
+            </div>
+
+            <div className="camera-help">
+              City View emphasizes the built township. Cadastral View emphasizes parcels and property layers. Select or double-click a building to inspect it with the mouse.
+            </div>
+          </div>
+
           <CesiumViewer
             key={sceneVersion}
             onSelect={setSelectedProperty}
             layers={layers}
+            cameraCommand={cameraCommand}
             searchText={mapSearchText}
             searchTrigger={searchTrigger}
             onSearchResult={handleSearchResult}

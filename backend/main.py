@@ -49,7 +49,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="1.0.0",
+    version="1.3.4",
 )
 
 
@@ -182,7 +182,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "1.0.0",
+        "version": "1.3.4",
     }
 
 
@@ -1437,79 +1437,151 @@ def _insert_colony_asset(
 def generate_demo_colony():
 
     """
-    Replace the small development demo with a deterministic,
-    planned residential-colony dataset.
+    Replace the small development demo with the deterministic
+    Bhumi3D Township V3 Step 3.4 dataset.
 
-    V1 creates:
-    - 50 cadastral plots
-    - 20 multi-storey apartment towers (all above 5 floors)
+    Step 3.4 keeps the 150-plot cadastral foundation and adds stronger
+    civic architecture / facade realism while preserving the Step 2.1
+    road/camera work and the Step 3.2 City/Cadastral presentation modes:
+    - 150 cadastral plots
+    - 50 apartment-tower plots and tower footprints
+    - 80 residential plots with low-rise homes
+    - 20 civic / amenity plots
     - 2 schools
-    - 1 office/community building
-    - 2 parks
-    - 1 common surface-parking area
-    - planned internal roads
-    - street-light points
+    - 2 hospitals
+    - 1 gym / sports centre
+    - 1 shopping complex
+    - administration, clubhouse and community facilities
+    - 4 parks and 2 common parking areas
+    - a larger road grid with medians and lane hierarchy
+    - modern street lights on both sides of roads
+    - lane/edge markings, zebra crossings and road text
+    - traffic signals at major intersections
+    - varied apartment-tower and house massing
+    - landscaped parks, trees, paths and parking-bay markings
+    - stronger school, hospital, gym and commercial identities
+    - a landmark CADASTRAX3D TOWNSHIP entrance gate
+    - principal-road sidewalks and planted verge strips
+    - dual City View / Cadastral View presentation support
+    - a grounded township base plane and perimeter green belt
+    - more opaque buildings with procedural facade / roof detailing
+    - additional boundary landscaping and park furniture
+    - a more substantial CadastraX3D entrance with entry / exit barriers
+    - apartment lobby canopies and additional balcony / facade families
+    - villa porch details and more varied house footprints
+    - hospital emergency canopies, ambulance bays and red-cross identity
+    - school sports courts and entrance structures
+    - shopping arcade frontage and gym entrance identity
 
-    Vertical apartment ownership volumes are intentionally left for
-    the next milestone so the colony overview remains lightweight.
+    Individual apartment ownership volumes remain intentionally
+    deferred so the township overview stays lightweight.
     """
 
     # -----------------------------------------------------
     # PLANNING CONSTANTS
     # -----------------------------------------------------
 
-    base_lon = 77.20500
-    base_lat = 28.61150
+    base_lon = 77.20260
+    base_lat = 28.60980
 
     plot_width = 0.00042
     plot_height = 0.00034
 
-    vertical_road_width = 0.00010
+    rows = 10
+    columns = 15
 
+    # Road gaps between the 15 columns.  A wider north-south
+    # boulevard runs through the centre of the township.
+    vertical_road_widths = [
+        0.00009, 0.00009, 0.00010, 0.00009, 0.00009, 0.00010,
+        0.00018,
+        0.00010, 0.00009, 0.00009, 0.00010, 0.00009, 0.00009,
+        0.00010,
+    ]
+
+    # Road gaps between the 10 rows.  The middle corridor is the
+    # primary east-west avenue and another collector is wider too.
     horizontal_road_widths = [
+        0.00009,
         0.00010,
-        0.00020,  # central/main avenue
+        0.00010,
+        0.00020,
         0.00010,
         0.00010,
+        0.00016,
+        0.00010,
+        0.00009,
     ]
 
-    rows = 5
-    columns = 10
-
+    # 50 apartment towers. Every tower has more than five floors;
+    # selected signature towers rise to 32, 36 and 40 floors.
     apartment_floors = [
-        6, 7, 8, 9, 10,
-        11, 12, 14, 16, 18,
-        20, 22, 24, 26, 28,
-        8, 12, 15, 18, 21,
+        6, 7, 8, 9, 10, 12,
+        7, 8, 10, 12, 14, 16,
+        8, 10, 12, 14, 16, 18,
+        10, 12, 14, 16, 18, 20,
+        12, 14, 16, 18, 20, 22,
+        14, 16, 18, 20, 22, 24,
+        16, 18, 20, 22, 24, 26,
+        18, 20, 22, 24, 28, 32,
+        36, 40,
     ]
 
-    # 5 rows x 10 columns = exactly 50 cadastral plots.
-    # Counts:
-    # 20 apartment plots, 24 villa plots, 2 schools,
-    # 1 office, 2 parks and 1 common parking plot.
+    # -----------------------------------------------------
+    # LAND-USE PLAN
+    # -----------------------------------------------------
 
-    land_use_grid = [
-        [
-            "school", "villa", "villa", "apartment", "apartment",
-            "apartment", "villa", "villa", "villa", "villa",
-        ],
-        [
-            "villa", "villa", "apartment", "apartment", "park",
-            "apartment", "apartment", "villa", "villa", "villa",
-        ],
-        [
-            "office", "apartment", "apartment", "apartment", "villa",
-            "villa", "apartment", "apartment", "parking", "villa",
-        ],
-        [
-            "villa", "villa", "apartment", "apartment", "park",
-            "apartment", "apartment", "villa", "villa", "villa",
-        ],
-        [
-            "school", "villa", "villa", "apartment", "apartment",
-            "apartment", "apartment", "villa", "villa", "villa",
-        ],
-    ]
+    # Apartment districts form two north-south clusters, with two
+    # signature towers close to the central spine.
+    apartment_cells = {
+        *((row, column) for row in range(1, 9) for column in (3, 4, 5)),
+        *((row, column) for row in range(1, 9) for column in (9, 10, 11)),
+        (1, 7),
+        (8, 7),
+    }
+
+    # Exactly 20 amenity / public-service plots. Everything else is
+    # a low-rise residential plot, giving exactly 80 such plots.
+    amenity_cells = {
+        (0, 0): "school",
+        (9, 14): "school",
+        (1, 13): "hospital",
+        (8, 1): "hospital",
+        (2, 7): "park",
+        (4, 6): "park",
+        (5, 8): "park",
+        (7, 7): "park",
+        (3, 13): "parking",
+        (6, 1): "parking",
+        (5, 6): "gym",
+        (4, 8): "shopping",
+        (0, 7): "office",
+        (9, 7): "clubhouse",
+        (9, 0): "security",
+        (0, 14): "utility",
+        (8, 14): "water_service",
+        (3, 7): "sports_ground",
+        (6, 7): "community_center",
+        (2, 13): "daycare",
+    }
+
+    # Safety check so future edits cannot silently change the target
+    # composition of Township V3 Step 1.
+    if len(apartment_cells) != 50 or len(amenity_cells) != 20:
+        raise HTTPException(
+            status_code=500,
+            detail="Township planning configuration is invalid",
+        )
+
+    if apartment_cells.intersection(amenity_cells.keys()):
+        raise HTTPException(
+            status_code=500,
+            detail="Apartment and amenity planning cells overlap",
+        )
+
+    # -----------------------------------------------------
+    # GRID COORDINATES
+    # -----------------------------------------------------
 
     x_starts = []
     current_x = base_lon
@@ -1519,9 +1591,9 @@ def generate_demo_colony():
         current_x += plot_width
 
         if column_index < columns - 1:
-            current_x += vertical_road_width
+            current_x += vertical_road_widths[column_index]
 
-    colony_max_lon = current_x
+    township_max_lon = current_x
 
     y_starts = []
     current_y = base_lat
@@ -1533,14 +1605,16 @@ def generate_demo_colony():
         if row_index < rows - 1:
             current_y += horizontal_road_widths[row_index]
 
-    colony_max_lat = current_y
+    township_max_lat = current_y
 
     plots = []
 
     apartment_index = 0
-    villa_index = 0
+    residential_index = 0
     school_index = 0
+    hospital_index = 0
     park_index = 0
+    parking_index = 0
 
     try:
 
@@ -1571,7 +1645,7 @@ def generate_demo_colony():
                 )
 
                 # -----------------------------------------
-                # 50 CADASTRAL PARCELS + LAND USE
+                # 150 CADASTRAL PARCELS + ZONING
                 # -----------------------------------------
 
                 parcel_number = 0
@@ -1581,17 +1655,21 @@ def generate_demo_colony():
                     for column_index in range(columns):
 
                         parcel_number += 1
+                        cell = (row_index, column_index)
 
-                        land_use = land_use_grid[row_index][column_index]
+                        if cell in apartment_cells:
+                            land_use = "apartment"
+                        elif cell in amenity_cells:
+                            land_use = amenity_cells[cell]
+                        else:
+                            land_use = "residential"
 
                         min_lon = x_starts[column_index]
                         min_lat = y_starts[row_index]
                         max_lon = min_lon + plot_width
                         max_lat = min_lat + plot_height
 
-                        ulpin = (
-                            f"RJ-JPR-COLONY-{parcel_number:04d}"
-                        )
+                        ulpin = f"RJ-JPR-TOWNSHIP-{parcel_number:04d}"
 
                         if land_use == "apartment":
                             apartment_index += 1
@@ -1599,16 +1677,22 @@ def generate_demo_colony():
                                 f"Apartment Plot A{apartment_index:02d}"
                             )
 
-                        elif land_use == "villa":
-                            villa_index += 1
+                        elif land_use == "residential":
+                            residential_index += 1
                             display_name = (
-                                f"Residential Plot V{villa_index:02d}"
+                                f"Residential Plot R{residential_index:03d}"
                             )
 
                         elif land_use == "school":
                             school_index += 1
                             display_name = (
-                                f"School Plot S{school_index:02d}"
+                                f"School Campus S{school_index:02d}"
+                            )
+
+                        elif land_use == "hospital":
+                            hospital_index += 1
+                            display_name = (
+                                f"Hospital Campus H{hospital_index:02d}"
                             )
 
                         elif land_use == "park":
@@ -1617,14 +1701,29 @@ def generate_demo_colony():
                                 f"Public Park P{park_index:02d}"
                             )
 
-                        elif land_use == "office":
-                            display_name = "Colony Office Plot"
-
                         elif land_use == "parking":
-                            display_name = "Common Parking Plot"
+                            parking_index += 1
+                            display_name = (
+                                f"Common Parking CP{parking_index:02d}"
+                            )
 
                         else:
-                            display_name = f"Plot {parcel_number:02d}"
+                            names = {
+                                "gym": "Township Gym & Fitness Centre",
+                                "shopping": "Township Shopping Complex",
+                                "office": "Township Administration Office",
+                                "clubhouse": "Residents Clubhouse",
+                                "security": "Township Security Centre",
+                                "utility": "Electrical Utility Plot",
+                                "water_service": "Water Services Plot",
+                                "sports_ground": "Community Sports Ground",
+                                "community_center": "Community Centre",
+                                "daycare": "Daycare & Early Learning Centre",
+                            }
+                            display_name = names.get(
+                                land_use,
+                                f"Township Plot {parcel_number:03d}",
+                            )
 
                         cursor.execute(
                             """
@@ -1667,12 +1766,68 @@ def generate_demo_colony():
                         )
 
                 # -----------------------------------------
-                # BUILDING FOOTPRINTS
+                # BUILDING FOOTPRINTS / STEP-3.4 MASSING
                 # -----------------------------------------
 
                 apartment_counter = 0
+                residential_counter = 0
                 school_counter = 0
+                hospital_counter = 0
                 building_feature_count = 0
+                residential_building_count = 0
+                civic_building_count = 0
+                building_specs = {}
+
+                building_amenity_types = {
+                    "school",
+                    "hospital",
+                    "gym",
+                    "shopping",
+                    "office",
+                    "clubhouse",
+                    "security",
+                    "utility",
+                    "water_service",
+                    "community_center",
+                    "daycare",
+                }
+
+                def polygon_wkt(coordinates):
+                    if coordinates[0] != coordinates[-1]:
+                        coordinates = [*coordinates, coordinates[0]]
+                    pairs = ", ".join(
+                        f"{longitude:.8f} {latitude:.8f}"
+                        for longitude, latitude in coordinates
+                    )
+                    return f"POLYGON(({pairs}))"
+
+                def rectangle_coordinates(min_lon, min_lat, max_lon, max_lat):
+                    return [
+                        (min_lon, min_lat),
+                        (max_lon, min_lat),
+                        (max_lon, max_lat),
+                        (min_lon, max_lat),
+                        (min_lon, min_lat),
+                    ]
+
+                apartment_styles = [
+                    ("slab", "warm_ivory", "flat_parapet", "bronze_balcony"),
+                    ("slim", "cool_stone", "roof_crown", "blue_glass"),
+                    ("wide", "sandstone_glass", "flat_parapet", "dark_balcony"),
+                    ("l_shape", "sage_stone", "roof_crown", "sage_glass"),
+                    ("stepped", "terracotta_grey", "mechanical_crown", "terracotta_balcony"),
+                    ("twin_core", "pearl_grey", "twin_crown", "charcoal_glass"),
+                    ("terraced_crown", "champagne_stone", "terraced_roof", "warm_glass"),
+                ]
+
+                house_styles = [
+                    ("duplex", "villa_cream", "terrace", "wood_screen"),
+                    ("compact_villa", "villa_sand", "parapet", "stone_entry"),
+                    ("wide_villa", "villa_grey", "terrace", "dark_frame"),
+                    ("courtyard_home", "villa_warm", "parapet", "courtyard_screen"),
+                    ("corner_villa", "villa_white", "terrace", "corner_glass"),
+                    ("garden_duplex", "villa_sage", "pitched_cap", "garden_entry"),
+                ]
 
                 for plot in plots:
 
@@ -1680,66 +1835,373 @@ def generate_demo_colony():
 
                     if land_use not in {
                         "apartment",
-                        "school",
-                        "office",
+                        "residential",
+                        *building_amenity_types,
                     }:
                         continue
 
-                    # Use deliberately different setbacks by use.
-                    if land_use == "apartment":
-                        inset_x = 0.000075
-                        inset_y = 0.000060
+                    units_per_floor = 1
+                    podium_floors = 0
+                    massing_style = "rectangular"
+                    facade_palette = "neutral"
+                    roof_style = "flat"
+                    facade_family = "standard"
 
+                    # Defaults are subsequently varied by land-use.
+                    building_min_lon = plot["min_lon"] + 0.000070
+                    building_min_lat = plot["min_lat"] + 0.000055
+                    building_max_lon = plot["max_lon"] - 0.000070
+                    building_max_lat = plot["max_lat"] - 0.000055
+
+                    if land_use == "apartment":
                         apartment_counter += 1
-                        building_code = (
-                            f"B{apartment_counter:02d}"
-                        )
-                        floors = apartment_floors[
-                            apartment_counter - 1
-                        ]
+                        building_code = f"B{apartment_counter:02d}"
+                        floors = apartment_floors[apartment_counter - 1]
                         floor_height = 3.2
                         units_per_floor = 4
                         building_type = "Apartment Tower"
-                        feature_name = (
-                            f"Residential Tower {building_code}"
-                        )
+                        feature_name = f"Residential Tower {building_code}"
+
+                        (
+                            massing_style,
+                            facade_palette,
+                            roof_style,
+                            facade_family,
+                        ) = apartment_styles[(apartment_counter - 1) % len(apartment_styles)]
+
+                        if floors >= 18 and apartment_counter % 3 == 0:
+                            podium_floors = 2
+
+                        if massing_style == "slab":
+                            building_min_lon = plot["min_lon"] + 0.000060
+                            building_max_lon = plot["max_lon"] - 0.000060
+                            building_min_lat = plot["min_lat"] + 0.000090
+                            building_max_lat = plot["max_lat"] - 0.000090
+                            footprint = rectangle_coordinates(
+                                building_min_lon,
+                                building_min_lat,
+                                building_max_lon,
+                                building_max_lat,
+                            )
+
+                        elif massing_style == "slim":
+                            building_min_lon = plot["min_lon"] + 0.000125
+                            building_max_lon = plot["max_lon"] - 0.000125
+                            building_min_lat = plot["min_lat"] + 0.000050
+                            building_max_lat = plot["max_lat"] - 0.000050
+                            footprint = rectangle_coordinates(
+                                building_min_lon,
+                                building_min_lat,
+                                building_max_lon,
+                                building_max_lat,
+                            )
+
+                        elif massing_style == "wide":
+                            building_min_lon = plot["min_lon"] + 0.000048
+                            building_max_lon = plot["max_lon"] - 0.000048
+                            building_min_lat = plot["min_lat"] + 0.000105
+                            building_max_lat = plot["max_lat"] - 0.000105
+                            footprint = rectangle_coordinates(
+                                building_min_lon,
+                                building_min_lat,
+                                building_max_lon,
+                                building_max_lat,
+                            )
+
+                        elif massing_style == "l_shape":
+                            x1 = plot["min_lon"] + 0.000060
+                            x2 = plot["max_lon"] - 0.000060
+                            y1 = plot["min_lat"] + 0.000060
+                            y2 = plot["max_lat"] - 0.000060
+                            notch_x = x1 + (x2 - x1) * 0.56
+                            notch_y = y1 + (y2 - y1) * 0.46
+                            footprint = [
+                                (x1, y1),
+                                (x2, y1),
+                                (x2, notch_y),
+                                (notch_x, notch_y),
+                                (notch_x, y2),
+                                (x1, y2),
+                                (x1, y1),
+                            ]
+                            building_min_lon, building_max_lon = x1, x2
+                            building_min_lat, building_max_lat = y1, y2
+
+                        elif massing_style == "twin_core":
+                            x1 = plot["min_lon"] + 0.000070
+                            x2 = plot["max_lon"] - 0.000070
+                            y1 = plot["min_lat"] + 0.000055
+                            y2 = plot["max_lat"] - 0.000055
+                            waist = (x2 - x1) * 0.18
+                            mid_x = (x1 + x2) / 2
+                            footprint = [
+                                (x1, y1),
+                                (mid_x - waist, y1),
+                                (mid_x - waist, y1 + (y2-y1)*0.26),
+                                (mid_x + waist, y1 + (y2-y1)*0.26),
+                                (mid_x + waist, y1),
+                                (x2, y1),
+                                (x2, y2),
+                                (mid_x + waist, y2),
+                                (mid_x + waist, y1 + (y2-y1)*0.74),
+                                (mid_x - waist, y1 + (y2-y1)*0.74),
+                                (mid_x - waist, y2),
+                                (x1, y2),
+                                (x1, y1),
+                            ]
+                            building_min_lon, building_max_lon = x1, x2
+                            building_min_lat, building_max_lat = y1, y2
+
+                        elif massing_style == "terraced_crown":
+                            x1 = plot["min_lon"] + 0.000068
+                            x2 = plot["max_lon"] - 0.000068
+                            y1 = plot["min_lat"] + 0.000060
+                            y2 = plot["max_lat"] - 0.000060
+                            chamfer_x = (x2 - x1) * 0.12
+                            chamfer_y = (y2 - y1) * 0.12
+                            footprint = [
+                                (x1 + chamfer_x, y1),
+                                (x2 - chamfer_x, y1),
+                                (x2, y1 + chamfer_y),
+                                (x2, y2 - chamfer_y),
+                                (x2 - chamfer_x, y2),
+                                (x1 + chamfer_x, y2),
+                                (x1, y2 - chamfer_y),
+                                (x1, y1 + chamfer_y),
+                                (x1 + chamfer_x, y1),
+                            ]
+                            building_min_lon, building_max_lon = x1, x2
+                            building_min_lat, building_max_lat = y1, y2
+
+                        else:  # stepped
+                            x1 = plot["min_lon"] + 0.000060
+                            x2 = plot["max_lon"] - 0.000060
+                            y1 = plot["min_lat"] + 0.000058
+                            y2 = plot["max_lat"] - 0.000058
+                            dx = (x2 - x1) * 0.18
+                            dy = (y2 - y1) * 0.16
+                            footprint = [
+                                (x1 + dx, y1),
+                                (x2 - dx, y1),
+                                (x2, y1 + dy),
+                                (x2, y2 - dy),
+                                (x2 - dx, y2),
+                                (x1 + dx, y2),
+                                (x1, y2 - dy),
+                                (x1, y1 + dy),
+                                (x1 + dx, y1),
+                            ]
+                            building_min_lon, building_max_lon = x1, x2
+                            building_min_lat, building_max_lat = y1, y2
+
+                    elif land_use == "residential":
+                        residential_counter += 1
+                        building_code = f"HOME{residential_counter:03d}"
+                        floors = 2 + (residential_counter % 2)
+                        floor_height = 3.1
+                        building_type = "Residential House"
+                        feature_name = f"Residence {residential_counter:03d}"
+                        residential_building_count += 1
+
+                        (
+                            massing_style,
+                            facade_palette,
+                            roof_style,
+                            facade_family,
+                        ) = house_styles[(residential_counter - 1) % len(house_styles)]
+
+                        # Houses move around within their plots so rows do not look copied.
+                        shift_x = ((residential_counter % 3) - 1) * 0.000015
+                        shift_y = ((residential_counter % 4) - 1.5) * 0.000008
+
+                        if massing_style == "wide_villa":
+                            building_min_lon = plot["min_lon"] + 0.000082 + shift_x
+                            building_max_lon = plot["max_lon"] - 0.000082 + shift_x
+                            building_min_lat = plot["min_lat"] + 0.000105 + shift_y
+                            building_max_lat = plot["max_lat"] - 0.000075 + shift_y
+                        else:
+                            building_min_lon = plot["min_lon"] + 0.000108 + shift_x
+                            building_max_lon = plot["max_lon"] - 0.000100 + shift_x
+                            building_min_lat = plot["min_lat"] + 0.000078 + shift_y
+                            building_max_lat = plot["max_lat"] - 0.000088 + shift_y
+
+                        if massing_style in {"courtyard_home", "corner_villa"}:
+                            x1, x2 = building_min_lon, building_max_lon
+                            y1, y2 = building_min_lat, building_max_lat
+                            cut_x = x1 + (x2 - x1) * (0.56 if massing_style == "courtyard_home" else 0.68)
+                            cut_y = y1 + (y2 - y1) * (0.48 if massing_style == "courtyard_home" else 0.58)
+                            footprint = [
+                                (x1, y1), (x2, y1), (x2, cut_y),
+                                (cut_x, cut_y), (cut_x, y2), (x1, y2), (x1, y1),
+                            ]
+                        else:
+                            footprint = rectangle_coordinates(
+                                building_min_lon,
+                                building_min_lat,
+                                building_max_lon,
+                                building_max_lat,
+                            )
 
                     elif land_use == "school":
-                        inset_x = 0.000050
-                        inset_y = 0.000055
-
                         school_counter += 1
-                        building_code = (
-                            f"SCH{school_counter:02d}"
-                        )
-                        floors = 3 if school_counter == 1 else 4
+                        building_code = f"SCH{school_counter:02d}"
+                        floors = 4 if school_counter == 1 else 5
                         floor_height = 3.6
-                        units_per_floor = 1
                         building_type = "School"
-                        feature_name = (
-                            f"Community School {school_counter}"
-                        )
+                        feature_name = f"CadastraX3D Public School {school_counter}"
+                        massing_style = "academic_wing"
+                        facade_palette = "school_cream"
+                        roof_style = "flat_parapet"
+                        facade_family = "academic_courtyard"
+                        civic_building_count += 1
+
+                        x1 = plot["min_lon"] + 0.000190
+                        x2 = plot["max_lon"] - 0.000028
+                        y1 = plot["min_lat"] + 0.000045
+                        y2 = plot["max_lat"] - 0.000045
+                        footprint = rectangle_coordinates(x1, y1, x2, y2)
+                        building_min_lon, building_max_lon = x1, x2
+                        building_min_lat, building_max_lat = y1, y2
+
+                    elif land_use == "hospital":
+                        hospital_counter += 1
+                        building_code = f"HOSP{hospital_counter:02d}"
+                        floors = 6 if hospital_counter == 1 else 8
+                        floor_height = 3.6
+                        building_type = "Hospital"
+                        feature_name = f"CadastraX3D Hospital {hospital_counter}"
+                        massing_style = "hospital_wing"
+                        facade_palette = "hospital_white"
+                        roof_style = "helipad_ready"
+                        facade_family = "hospital_glass_spine"
+                        civic_building_count += 1
+
+                        x1 = plot["min_lon"] + 0.000050
+                        x2 = plot["max_lon"] - 0.000050
+                        y1 = plot["min_lat"] + 0.000064
+                        y2 = plot["max_lat"] - 0.000070
+                        mid_x = (x1 + x2) / 2
+                        notch = (x2 - x1) * 0.16
+                        # Broad H-like plan reads as institutional massing from above.
+                        footprint = [
+                            (x1, y1),
+                            (mid_x - notch, y1),
+                            (mid_x - notch, y1 + (y2-y1)*0.36),
+                            (mid_x + notch, y1 + (y2-y1)*0.36),
+                            (mid_x + notch, y1),
+                            (x2, y1),
+                            (x2, y2),
+                            (mid_x + notch, y2),
+                            (mid_x + notch, y1 + (y2-y1)*0.64),
+                            (mid_x - notch, y1 + (y2-y1)*0.64),
+                            (mid_x - notch, y2),
+                            (x1, y2),
+                            (x1, y1),
+                        ]
+                        building_min_lon, building_max_lon = x1, x2
+                        building_min_lat, building_max_lat = y1, y2
 
                     else:
-                        inset_x = 0.000065
-                        inset_y = 0.000055
+                        settings = {
+                            "gym": (
+                                "GYM01", 3, 3.5,
+                                "Gym & Fitness Centre",
+                                "CadastraX3D Fitness & Sports Club",
+                                "fitness_glass",
+                            ),
+                            "shopping": (
+                                "SHOP01", 4, 3.8,
+                                "Shopping Complex",
+                                "CadastraX3D Town Centre",
+                                "commercial_warm",
+                            ),
+                            "office": (
+                                "OFF01", 10, 3.4,
+                                "Township Office",
+                                "CadastraX3D Township Administration",
+                                "office_glass",
+                            ),
+                            "clubhouse": (
+                                "CLUB01", 3, 3.4,
+                                "Clubhouse",
+                                "Residents Clubhouse",
+                                "clubhouse_green",
+                            ),
+                            "security": (
+                                "SEC01", 2, 3.2,
+                                "Security Centre",
+                                "Township Security Centre",
+                                "security_grey",
+                            ),
+                            "utility": (
+                                "UTIL01", 1, 4.0,
+                                "Utility Building",
+                                "Electrical Utility Building",
+                                "utility_grey",
+                            ),
+                            "water_service": (
+                                "WTR01", 2, 3.4,
+                                "Water Services",
+                                "Water Services Building",
+                                "water_blue",
+                            ),
+                            "community_center": (
+                                "COM01", 4, 3.4,
+                                "Community Centre",
+                                "CadastraX3D Community Centre",
+                                "community_sage",
+                            ),
+                            "daycare": (
+                                "DAY01", 3, 3.3,
+                                "Daycare",
+                                "Daycare & Early Learning Centre",
+                                "daycare_soft",
+                            ),
+                        }
 
-                        building_code = "OFF01"
-                        floors = 8
-                        floor_height = 3.4
-                        units_per_floor = 1
-                        building_type = "Colony Office"
-                        feature_name = "Colony Administration Office"
+                        (
+                            building_code,
+                            floors,
+                            floor_height,
+                            building_type,
+                            feature_name,
+                            facade_palette,
+                        ) = settings[land_use]
+                        massing_style = f"{land_use}_block"
+                        roof_style = "flat_parapet"
+                        facade_family = {
+                            "shopping": "retail_arcade",
+                            "gym": "sports_glass",
+                            "office": "office_grid",
+                            "clubhouse": "clubhouse_veranda",
+                            "community_center": "civic_colonnade",
+                            "daycare": "daycare_playful",
+                        }.get(land_use, "civic_standard")
+                        civic_building_count += 1
 
-                    building_min_lon = plot["min_lon"] + inset_x
-                    building_min_lat = plot["min_lat"] + inset_y
-                    building_max_lon = plot["max_lon"] - inset_x
-                    building_max_lat = plot["max_lat"] - inset_y
+                        # Civic buildings get a wider, lower institutional footprint.
+                        if land_use in {"shopping", "gym", "community_center", "clubhouse"}:
+                            building_min_lon = plot["min_lon"] + 0.000040
+                            building_max_lon = plot["max_lon"] - 0.000040
+                            building_min_lat = plot["min_lat"] + 0.000095
+                            building_max_lat = plot["max_lat"] - 0.000075
+                        elif land_use == "office":
+                            building_min_lon = plot["min_lon"] + 0.000095
+                            building_max_lon = plot["max_lon"] - 0.000095
+                            building_min_lat = plot["min_lat"] + 0.000055
+                            building_max_lat = plot["max_lat"] - 0.000055
+                        else:
+                            building_min_lon = plot["min_lon"] + 0.000090
+                            building_max_lon = plot["max_lon"] - 0.000090
+                            building_min_lat = plot["min_lat"] + 0.000078
+                            building_max_lat = plot["max_lat"] - 0.000078
 
-                    if land_use == "school":
-                        # Leave the western side open for the playground.
-                        building_min_lon = plot["min_lon"] + 0.000155
-                        building_max_lon = plot["max_lon"] - 0.000035
+                        footprint = rectangle_coordinates(
+                            building_min_lon,
+                            building_min_lat,
+                            building_max_lon,
+                            building_max_lat,
+                        )
 
                     height_m = floors * floor_height
 
@@ -1752,7 +2214,12 @@ def generate_demo_colony():
                         "units_per_floor": units_per_floor,
                         "floor_height": floor_height,
                         "height_m": round(height_m, 2),
-                        "demo": "planned_colony_v1",
+                        "massing_style": massing_style,
+                        "facade_palette": facade_palette,
+                        "facade_family": facade_family,
+                        "roof_style": roof_style,
+                        "podium_floors": podium_floors,
+                        "demo": "bhumi3d_township_v3_step3_4",
                     }
 
                     cursor.execute(
@@ -1769,40 +2236,74 @@ def generate_demo_colony():
                             %s,
                             %s,
                             %s::jsonb,
-                            ST_MakeEnvelope(
-                                %s, %s, %s, %s, 4326
-                            )
+                            ST_GeomFromText(%s, 4326)
                         );
                         """,
                         (
                             building_type,
                             feature_name,
-                            "bhumi3d_planned_colony_v1",
+                            "bhumi3d_township_v3_step3_4",
                             json.dumps(metadata),
-                            building_min_lon,
-                            building_min_lat,
-                            building_max_lon,
-                            building_max_lat,
+                            polygon_wkt(footprint),
                         ),
                     )
 
                     building_feature_count += 1
+                    building_specs[plot["ulpin"]] = {
+                        "code": building_code,
+                        "land_use": land_use,
+                        "height_m": height_m,
+                        "min_lon": building_min_lon,
+                        "min_lat": building_min_lat,
+                        "max_lon": building_max_lon,
+                        "max_lat": building_max_lat,
+                        "floors": floors,
+                        "floor_height": floor_height,
+                        "facade_family": facade_family,
+                        "massing_style": massing_style,
+                    }
 
-                    # School playground beside the school block.
+                    # Step 3.4 close-range entrance architecture for every occupied plot.
+                    building_center_lon = (building_min_lon + building_max_lon) / 2
+                    building_center_lat = (building_min_lat + building_max_lat) / 2
+                    if land_use == "apartment":
+                        _insert_colony_asset(
+                            cursor,
+                            "tower_entrance",
+                            f"{building_code} Main Lobby",
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "building_code": building_code,
+                                "width_m": 7.2 if floors >= 18 else 5.8,
+                                "depth_m": 2.8,
+                                "height_m": 3.1,
+                                "facade_family": facade_family,
+                            },
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (building_center_lon, building_min_lat - 0.000008),
+                        )
+                    elif land_use == "residential":
+                        _insert_colony_asset(
+                            cursor,
+                            "house_porch",
+                            f"{building_code} Porch",
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "building_code": building_code,
+                                "width_m": 3.6,
+                                "depth_m": 1.8,
+                                "height_m": 2.6,
+                                "facade_family": facade_family,
+                            },
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (building_center_lon, building_min_lat - 0.000006),
+                        )
+
                     if land_use == "school":
-
-                        playground_min_lon = (
-                            plot["min_lon"] + 0.000020
-                        )
-                        playground_max_lon = (
-                            plot["min_lon"] + 0.000120
-                        )
-                        playground_min_lat = (
-                            plot["min_lat"] + 0.000080
-                        )
-                        playground_max_lat = (
-                            plot["max_lat"] - 0.000080
-                        )
+                        playground_min_lon = plot["min_lon"] + 0.000018
+                        playground_max_lon = plot["min_lon"] + 0.000165
+                        playground_min_lat = plot["min_lat"] + 0.000058
+                        playground_max_lat = plot["max_lat"] - 0.000058
 
                         _insert_colony_asset(
                             cursor,
@@ -1821,14 +2322,130 @@ def generate_demo_colony():
                             ),
                         )
 
+                        # A marked multi-sport court and entrance canopy make the school readable without relying on labels.
+                        _insert_colony_asset(
+                            cursor,
+                            "school_court",
+                            f"School {school_counter} Sports Court",
+                            {"parent_ulpin": plot["ulpin"], "court_type": "basketball_multiuse"},
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                playground_min_lon + 0.000018,
+                                playground_min_lat + 0.000020,
+                                playground_max_lon - 0.000018,
+                                playground_max_lat - 0.000020,
+                            ),
+                        )
+                        _insert_colony_asset(
+                            cursor,
+                            "school_entrance",
+                            f"School {school_counter} Main Entrance",
+                            {"parent_ulpin": plot["ulpin"], "school_no": school_counter},
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (
+                                (building_min_lon + building_max_lon) / 2,
+                                building_min_lat - 0.000008,
+                            ),
+                        )
+
                 # -----------------------------------------
-                # PARK + COMMON PARKING SURFACES
+                # OPEN SPACE / LANDSCAPE / SPECIAL AMENITIES
                 # -----------------------------------------
+
+                tree_count = 0
+                park_path_count = 0
+                parking_bay_count = 0
+                special_visual_count = 0
+                park_bench_count = 0
+                ground_asset_count = 0
+                green_belt_count = 0
+                entrance_detail_count = 0
+
+                def insert_tree(longitude, latitude, context, scale=1.0):
+                    nonlocal tree_count
+                    tree_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "tree",
+                        f"Landscape Tree T{tree_count:03d}",
+                        {
+                            "context": context,
+                            "height_m": round(5.2 * scale, 2),
+                            "canopy_radius_m": round(2.15 * scale, 2),
+                            "style": "broadleaf",
+                        },
+                        "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                        (longitude, latitude),
+                    )
+
+                def insert_path(name, points, width_m=2.2):
+                    nonlocal park_path_count
+                    park_path_count += 1
+                    wkt = "LINESTRING(" + ", ".join(
+                        f"{lon:.8f} {lat:.8f}" for lon, lat in points
+                    ) + ")"
+                    _insert_colony_asset(
+                        cursor,
+                        "park_path",
+                        name,
+                        {"width_m": width_m, "surface": "paver"},
+                        "ST_GeomFromText(%s, 4326)",
+                        (wkt,),
+                    )
+
+                # -------------------------------------------------
+                # STEP 3.4 GROUNDING + GREEN-BELT FOUNDATION
+                # -------------------------------------------------
+                ground_asset_count += 1
+                _insert_colony_asset(
+                    cursor,
+                    "township_ground",
+                    "CadastraX3D Township Ground Plane",
+                    {"surface": "urban_landscape", "step": "3.3"},
+                    "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                    (
+                        base_lon - 0.00028,
+                        base_lat - 0.00034,
+                        township_max_lon + 0.00028,
+                        township_max_lat + 0.00024,
+                    ),
+                )
+
+                belt_depth = 0.00011
+                green_belts = [
+                    ("South Green Belt", base_lon - 0.00018, base_lat - 0.00016, township_max_lon + 0.00018, base_lat - 0.000025),
+                    ("North Green Belt", base_lon - 0.00018, township_max_lat + 0.000025, township_max_lon + 0.00018, township_max_lat + 0.00016),
+                    ("West Green Belt", base_lon - 0.00016, base_lat - 0.000025, base_lon - 0.000025, township_max_lat + 0.000025),
+                    ("East Green Belt", township_max_lon + 0.000025, base_lat - 0.000025, township_max_lon + 0.00016, township_max_lat + 0.000025),
+                ]
+                for belt_name, min_lon, min_lat, max_lon, max_lat in green_belts:
+                    green_belt_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "green_belt",
+                        belt_name,
+                        {"surface": "landscaped_buffer"},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (min_lon, min_lat, max_lon, max_lat),
+                    )
+
+                # A sparse perimeter tree belt helps the city feel bounded without
+                # making the overview too heavy on older hardware.
+                for column_index in range(0, columns, 2):
+                    longitude = x_starts[column_index] + plot_width / 2
+                    insert_tree(longitude, base_lat - 0.000075, "South Green Belt", 0.78)
+                    insert_tree(longitude, township_max_lat + 0.000075, "North Green Belt", 0.82)
+
+                for row_index in range(0, rows, 2):
+                    latitude = y_starts[row_index] + plot_height / 2
+                    insert_tree(base_lon - 0.000075, latitude, "West Green Belt", 0.80)
+                    insert_tree(township_max_lon + 0.000075, latitude, "East Green Belt", 0.80)
 
                 for plot in plots:
+                    center_lon = (plot["min_lon"] + plot["max_lon"]) / 2
+                    center_lat = (plot["min_lat"] + plot["max_lat"]) / 2
 
                     if plot["land_use"] == "park":
-
                         _insert_colony_asset(
                             cursor,
                             "park",
@@ -1836,6 +2453,7 @@ def generate_demo_colony():
                             {
                                 "parent_ulpin": plot["ulpin"],
                                 "land_use": "Public Park",
+                                "landscape_style": "neighborhood_park",
                             },
                             "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
                             (
@@ -1846,251 +2464,1427 @@ def generate_demo_colony():
                             ),
                         )
 
-                    if plot["land_use"] == "parking":
+                        # Crossed walking paths form a readable park structure.
+                        insert_path(
+                            f"{plot['name']} East-West Walk",
+                            [
+                                (plot["min_lon"] + 0.000035, center_lat),
+                                (plot["max_lon"] - 0.000035, center_lat),
+                            ],
+                            2.4,
+                        )
+                        insert_path(
+                            f"{plot['name']} North-South Walk",
+                            [
+                                (center_lon, plot["min_lat"] + 0.000035),
+                                (center_lon, plot["max_lat"] - 0.000035),
+                            ],
+                            2.2,
+                        )
+
+                        tree_positions = [
+                            (0.10, 0.16), (0.28, 0.12), (0.72, 0.12), (0.90, 0.18),
+                            (0.10, 0.82), (0.28, 0.88), (0.72, 0.88), (0.90, 0.82),
+                            (0.14, 0.50), (0.86, 0.50),
+                        ]
+                        for tx, ty in tree_positions:
+                            insert_tree(
+                                plot["min_lon"] + plot_width * tx,
+                                plot["min_lat"] + plot_height * ty,
+                                plot["name"],
+                                1.0 + ((tree_count % 3) * 0.08),
+                            )
+
+                        # Four benches sit beside the main crossed walkways.
+                        for bx, by, heading in [
+                            (0.30, 0.47, 0),
+                            (0.70, 0.53, 180),
+                            (0.47, 0.30, 90),
+                            (0.53, 0.70, 270),
+                        ]:
+                            park_bench_count += 1
+                            _insert_colony_asset(
+                                cursor,
+                                "park_bench",
+                                f"{plot['name']} Bench {park_bench_count:02d}",
+                                {"heading_deg": heading, "style": "timber_modern"},
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (
+                                    plot["min_lon"] + plot_width * bx,
+                                    plot["min_lat"] + plot_height * by,
+                                ),
+                            )
+
+                        if plot["number"] % 2 == 1:
+                            special_visual_count += 1
+                            _insert_colony_asset(
+                                cursor,
+                                "fountain",
+                                f"{plot['name']} Fountain",
+                                {"radius_m": 2.5},
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (center_lon, center_lat),
+                            )
+
+                    elif plot["land_use"] == "parking":
+                        parking_min_lon = plot["min_lon"] + 0.000020
+                        parking_min_lat = plot["min_lat"] + 0.000020
+                        parking_max_lon = plot["max_lon"] - 0.000020
+                        parking_max_lat = plot["max_lat"] - 0.000020
 
                         _insert_colony_asset(
                             cursor,
                             "surface_parking",
-                            "Common Surface Parking",
+                            plot["name"],
                             {
                                 "parent_ulpin": plot["ulpin"],
-                                "capacity": 42,
+                                "capacity": 48,
                                 "land_use": "Common Parking",
                             },
                             "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
                             (
-                                plot["min_lon"] + 0.000020,
-                                plot["min_lat"] + 0.000020,
-                                plot["max_lon"] - 0.000020,
-                                plot["max_lat"] - 0.000020,
+                                parking_min_lon,
+                                parking_min_lat,
+                                parking_max_lon,
+                                parking_max_lat,
                             ),
                         )
 
+                        # Painted parking bays make the area read as parking from above.
+                        for bay in range(1, 12):
+                            x = parking_min_lon + (
+                                (parking_max_lon - parking_min_lon) * bay / 12
+                            )
+                            parking_bay_count += 1
+                            _insert_colony_asset(
+                                cursor,
+                                "parking_bay_marking",
+                                f"Parking Bay Divider PB{parking_bay_count:03d}",
+                                {"color": "white"},
+                                "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                                (x, parking_min_lat + 0.000018, x, parking_max_lat - 0.000018),
+                            )
+
+                    elif plot["land_use"] == "sports_ground":
+                        _insert_colony_asset(
+                            cursor,
+                            "playground",
+                            "Community Sports Ground",
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "surface": "multi_sport",
+                            },
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                plot["min_lon"] + 0.000018,
+                                plot["min_lat"] + 0.000018,
+                                plot["max_lon"] - 0.000018,
+                                plot["max_lat"] - 0.000018,
+                            ),
+                        )
+
+                    elif plot["land_use"] == "hospital":
+                        spec = building_specs.get(plot["ulpin"])
+                        if spec:
+                            special_visual_count += 2
+                            _insert_colony_asset(
+                                cursor,
+                                "hospital_forecourt",
+                                f"{plot['name']} Emergency Forecourt",
+                                {"parent_ulpin": plot["ulpin"], "purpose": "ambulance_arrival"},
+                                "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                                (
+                                    plot["min_lon"] + 0.000035,
+                                    plot["min_lat"] + 0.000020,
+                                    plot["max_lon"] - 0.000035,
+                                    plot["min_lat"] + 0.000055,
+                                ),
+                            )
+                            _insert_colony_asset(
+                                cursor,
+                                "hospital_helipad",
+                                f"{plot['name']} Rooftop Helipad",
+                                {
+                                    "parent_ulpin": plot["ulpin"],
+                                    "altitude_m": round(spec["height_m"] + 0.42, 2),
+                                    "radius_m": 5.0,
+                                },
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (
+                                    (spec["min_lon"] + spec["max_lon"]) / 2,
+                                    (spec["min_lat"] + spec["max_lat"]) / 2,
+                                ),
+                            )
+
+                            _insert_colony_asset(
+                                cursor,
+                                "hospital_canopy",
+                                f"{plot['name']} Emergency Canopy",
+                                {"parent_ulpin": plot["ulpin"], "width_m": 8.0, "depth_m": 4.0, "height_m": 3.6},
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (
+                                    (spec["min_lon"] + spec["max_lon"]) / 2,
+                                    spec["min_lat"] - 0.000010,
+                                ),
+                            )
+                            _insert_colony_asset(
+                                cursor,
+                                "hospital_cross",
+                                f"{plot['name']} Hospital Cross",
+                                {"parent_ulpin": plot["ulpin"], "height_m": 5.8},
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (
+                                    spec["max_lon"] - 0.000016,
+                                    spec["min_lat"] + 0.000018,
+                                ),
+                            )
+                            _insert_colony_asset(
+                                cursor,
+                                "ambulance_bay",
+                                f"{plot['name']} Ambulance Bay",
+                                {"parent_ulpin": plot["ulpin"], "capacity": 3},
+                                "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                                (
+                                    plot["min_lon"] + 0.000045,
+                                    plot["min_lat"] + 0.000023,
+                                    plot["min_lon"] + 0.000150,
+                                    plot["min_lat"] + 0.000050,
+                                ),
+                            )
+
+                    elif plot["land_use"] == "shopping":
+                        special_visual_count += 1
+                        _insert_colony_asset(
+                            cursor,
+                            "commercial_plaza",
+                            "CadastraX3D Town Centre Plaza",
+                            {"parent_ulpin": plot["ulpin"]},
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                plot["min_lon"] + 0.000028,
+                                plot["min_lat"] + 0.000025,
+                                plot["max_lon"] - 0.000028,
+                                plot["min_lat"] + 0.000082,
+                            ),
+                        )
+
+                        spec = building_specs.get(plot["ulpin"])
+                        if spec:
+                            _insert_colony_asset(
+                                cursor,
+                                "retail_frontage",
+                                "Town Centre Retail Arcade",
+                                {"parent_ulpin": plot["ulpin"], "shop_bays": 8},
+                                "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                                (
+                                    spec["min_lon"] + 0.000012,
+                                    spec["min_lat"] - 0.000006,
+                                    spec["max_lon"] - 0.000012,
+                                    spec["min_lat"] - 0.000006,
+                                ),
+                            )
+                            _insert_colony_asset(
+                                cursor,
+                                "shopping_sign",
+                                "CADASTRAX3D MARKET SQUARE",
+                                {"parent_ulpin": plot["ulpin"], "text": "MARKET SQUARE"},
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (
+                                    (spec["min_lon"] + spec["max_lon"]) / 2,
+                                    spec["min_lat"] - 0.000010,
+                                ),
+                            )
+
+                    elif plot["land_use"] == "gym":
+                        special_visual_count += 1
+                        _insert_colony_asset(
+                            cursor,
+                            "fitness_court",
+                            "Outdoor Fitness Court",
+                            {"parent_ulpin": plot["ulpin"]},
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                plot["min_lon"] + 0.000050,
+                                plot["max_lat"] - 0.000075,
+                                plot["max_lon"] - 0.000050,
+                                plot["max_lat"] - 0.000025,
+                            ),
+                        )
+
+                        spec = building_specs.get(plot["ulpin"])
+                        if spec:
+                            _insert_colony_asset(
+                                cursor,
+                                "gym_entrance",
+                                "CadastraX3D Fitness Club Entrance",
+                                {"parent_ulpin": plot["ulpin"], "text": "FITNESS CLUB"},
+                                "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                                (
+                                    (spec["min_lon"] + spec["max_lon"]) / 2,
+                                    spec["min_lat"] - 0.000008,
+                                ),
+                            )
+
+                    # Modest front-yard greenery for every second residential plot.
+                    if plot["land_use"] == "residential" and plot["number"] % 2 == 0:
+                        insert_tree(
+                            plot["min_lon"] + 0.000045,
+                            plot["min_lat"] + 0.000050,
+                            plot["name"],
+                            0.76,
+                        )
+
+                    if plot["land_use"] in {"school", "hospital"}:
+                        insert_tree(
+                            plot["max_lon"] - 0.000038,
+                            plot["max_lat"] - 0.000042,
+                            plot["name"],
+                            0.88,
+                        )
+                        insert_tree(
+                            plot["max_lon"] - 0.000038,
+                            plot["min_lat"] + 0.000042,
+                            plot["name"],
+                            0.88,
+                        )
+
                 # -----------------------------------------
-                # ROAD NETWORK IN THE GAPS BETWEEN PLOTS
+                # ROAD NETWORK BETWEEN PLOT BLOCKS
                 # -----------------------------------------
 
                 road_count = 0
+                sidewalk_count = 0
+                landscape_strip_count = 0
 
                 for column_index in range(columns - 1):
-
-                    road_min_lon = (
-                        x_starts[column_index] + plot_width
-                    )
+                    road_min_lon = x_starts[column_index] + plot_width
                     road_max_lon = (
-                        road_min_lon + vertical_road_width
+                        road_min_lon + vertical_road_widths[column_index]
                     )
+                    is_main_boulevard = column_index == 6
 
                     road_count += 1
-
                     _insert_colony_asset(
                         cursor,
                         "road",
-                        f"Residential Street {column_index + 1}",
+                        (
+                            "North-South Central Boulevard"
+                            if is_main_boulevard
+                            else f"Residential Street NS-{column_index + 1:02d}"
+                        ),
                         {
-                            "road_class": "Internal Street",
-                            "nominal_width_m": 10,
+                            "road_class": (
+                                "Main Boulevard"
+                                if is_main_boulevard
+                                else "Internal Street"
+                            ),
+                            "nominal_width_m": (
+                                18 if is_main_boulevard else 9
+                            ),
+                            "orientation": "north_south",
                         },
                         "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
                         (
                             road_min_lon,
                             base_lat,
                             road_max_lon,
-                            colony_max_lat,
+                            township_max_lat,
                         ),
                     )
 
                 for row_index in range(rows - 1):
-
-                    road_min_lat = (
-                        y_starts[row_index] + plot_height
-                    )
+                    road_min_lat = y_starts[row_index] + plot_height
                     road_max_lat = (
-                        road_min_lat
-                        + horizontal_road_widths[row_index]
+                        road_min_lat + horizontal_road_widths[row_index]
                     )
-
-                    is_main_avenue = row_index == 1
+                    is_main_avenue = row_index == 3
+                    is_secondary_collector = row_index == 6
 
                     road_count += 1
-
                     _insert_colony_asset(
                         cursor,
                         "road",
                         (
-                            "Central Avenue"
+                            "Township Central Avenue"
                             if is_main_avenue
-                            else f"Cross Street {row_index + 1}"
+                            else (
+                                "South Collector Road"
+                                if is_secondary_collector
+                                else f"Residential Street EW-{row_index + 1:02d}"
+                            )
                         ),
                         {
                             "road_class": (
                                 "Main Avenue"
                                 if is_main_avenue
-                                else "Collector Street"
+                                else (
+                                    "Collector Street"
+                                    if is_secondary_collector
+                                    else "Internal Street"
+                                )
                             ),
                             "nominal_width_m": (
                                 20
                                 if is_main_avenue
-                                else 10
+                                else (16 if is_secondary_collector else 9)
                             ),
+                            "orientation": "east_west",
                         },
                         "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
                         (
                             base_lon,
                             road_min_lat,
-                            colony_max_lon,
+                            township_max_lon,
                             road_max_lat,
                         ),
                     )
 
-                # Main entrance road just south of the colony.
-                colony_center_lon = (
-                    base_lon + colony_max_lon
-                ) / 2
+                # -----------------------------------------
+                # STEP 3.2 PEDESTRIAN REALISM
+                # -----------------------------------------
 
-                entrance_half_width = 0.000060
+                sidewalk_width = 0.000022
+                central_ns_min = x_starts[6] + plot_width
+                central_ns_max = central_ns_min + vertical_road_widths[6]
+
+                for side, min_lon, max_lon in [
+                    ("west", central_ns_min - sidewalk_width, central_ns_min),
+                    ("east", central_ns_max, central_ns_max + sidewalk_width),
+                ]:
+                    sidewalk_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "sidewalk",
+                        f"Central Boulevard {side.title()} Sidewalk",
+                        {"surface": "paver", "orientation": "north_south"},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (min_lon, base_lat, max_lon, township_max_lat),
+                    )
+
+                central_ew_min = y_starts[3] + plot_height
+                central_ew_max = central_ew_min + horizontal_road_widths[3]
+                for side, min_lat, max_lat in [
+                    ("south", central_ew_min - sidewalk_width, central_ew_min),
+                    ("north", central_ew_max, central_ew_max + sidewalk_width),
+                ]:
+                    sidewalk_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "sidewalk",
+                        f"Central Avenue {side.title()} Sidewalk",
+                        {"surface": "paver", "orientation": "east_west"},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (base_lon, min_lat, township_max_lon, max_lat),
+                    )
+
+                strip_width = 0.000012
+                for side, min_lon, max_lon in [
+                    ("west", central_ns_min - sidewalk_width - strip_width, central_ns_min - sidewalk_width),
+                    ("east", central_ns_max + sidewalk_width, central_ns_max + sidewalk_width + strip_width),
+                ]:
+                    landscape_strip_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "landscape_strip",
+                        f"Central Boulevard {side.title()} Green Strip",
+                        {"surface": "planted", "orientation": "north_south"},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (min_lon, base_lat, max_lon, township_max_lat),
+                    )
+
+                for side, min_lat, max_lat in [
+                    ("south", central_ew_min - sidewalk_width - strip_width, central_ew_min - sidewalk_width),
+                    ("north", central_ew_max + sidewalk_width, central_ew_max + sidewalk_width + strip_width),
+                ]:
+                    landscape_strip_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "landscape_strip",
+                        f"Central Avenue {side.title()} Green Strip",
+                        {"surface": "planted", "orientation": "east_west"},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (base_lon, min_lat, township_max_lon, max_lat),
+                    )
+
+                # Main entrance approach from the south.
+                township_center_lon = (base_lon + township_max_lon) / 2
+                entrance_half_width = 0.000085
 
                 _insert_colony_asset(
                     cursor,
                     "road",
-                    "Main Colony Entrance",
+                    "Main Township Entrance Boulevard",
                     {
                         "road_class": "Entrance Boulevard",
-                        "nominal_width_m": 12,
+                        "nominal_width_m": 18,
+                        "orientation": "north_south",
                     },
                     "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
                     (
-                        colony_center_lon - entrance_half_width,
-                        base_lat - 0.000240,
-                        colony_center_lon + entrance_half_width,
+                        township_center_lon - entrance_half_width,
+                        base_lat - 0.000300,
+                        township_center_lon + entrance_half_width,
                         base_lat,
                     ),
                 )
-
                 road_count += 1
 
                 # -----------------------------------------
-                # STREET LIGHTS
+                # CADASTRAX3D TOWNSHIP LANDMARK ENTRANCE
+                # -----------------------------------------
+
+                gate_lat = base_lat - 0.000145
+                gate_left_lon = township_center_lon - entrance_half_width * 0.78
+                gate_right_lon = township_center_lon + entrance_half_width * 0.78
+
+                _insert_colony_asset(
+                    cursor,
+                    "entrance_gate",
+                    "CadastraX3D Township Main Gate",
+                    {
+                        "sign_text": "CADASTRAX3D TOWNSHIP",
+                        "height_m": 10.5,
+                        "tower_height_m": 12.5,
+                        "beam_depth_m": 2.4,
+                        "sign_text_secondary": "SMART RESIDENTIAL TOWNSHIP",
+                        "left_lon": gate_left_lon,
+                        "right_lon": gate_right_lon,
+                        "gate_lat": gate_lat,
+                        "style": "modern_landmark",
+                    },
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                    (township_center_lon, gate_lat),
+                )
+
+                gatehouse_depth = 0.000050
+                gatehouse_width = 0.000060
+                for side, center_lon in [
+                    ("Entry Security", township_center_lon - entrance_half_width - 0.000050),
+                    ("Exit Security", township_center_lon + entrance_half_width + 0.000050),
+                ]:
+                    _insert_colony_asset(
+                        cursor,
+                        "gatehouse",
+                        f"CadastraX3D {side} Cabin",
+                        {"height_m": 3.4, "side": side},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (
+                            center_lon - gatehouse_width / 2,
+                            gate_lat - gatehouse_depth / 2,
+                            center_lon + gatehouse_width / 2,
+                            gate_lat + gatehouse_depth / 2,
+                        ),
+                    )
+
+                wall_lat = base_lat - 0.000006
+                _insert_colony_asset(
+                    cursor,
+                    "boundary_wall",
+                    "South Boundary Wall West",
+                    {"height_m": 1.8},
+                    "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                    (
+                        base_lon,
+                        wall_lat,
+                        township_center_lon - entrance_half_width - 0.000030,
+                        wall_lat,
+                    ),
+                )
+                _insert_colony_asset(
+                    cursor,
+                    "boundary_wall",
+                    "South Boundary Wall East",
+                    {"height_m": 1.8},
+                    "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                    (
+                        township_center_lon + entrance_half_width + 0.000030,
+                        wall_lat,
+                        township_max_lon,
+                        wall_lat,
+                    ),
+                )
+
+                # Continue the township boundary around the remaining three sides.
+                for wall_name, x1, y1, x2, y2 in [
+                    ("North Boundary Wall", base_lon, township_max_lat + 0.000006, township_max_lon, township_max_lat + 0.000006),
+                    ("West Boundary Wall", base_lon - 0.000006, base_lat, base_lon - 0.000006, township_max_lat),
+                    ("East Boundary Wall", township_max_lon + 0.000006, base_lat, township_max_lon + 0.000006, township_max_lat),
+                ]:
+                    _insert_colony_asset(
+                        cursor,
+                        "boundary_wall",
+                        wall_name,
+                        {"height_m": 1.8},
+                        "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                        (x1, y1, x2, y2),
+                    )
+
+                # ENTRY / EXIT boom barriers make the gateway read as a real controlled entrance.
+                barrier_lat = gate_lat - 0.000050
+                for barrier_name, x1, x2 in [
+                    ("Entry Boom Barrier", township_center_lon - entrance_half_width * 0.72, township_center_lon - 0.000012),
+                    ("Exit Boom Barrier", township_center_lon + 0.000012, township_center_lon + entrance_half_width * 0.72),
+                ]:
+                    entrance_detail_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "boom_barrier",
+                        barrier_name,
+                        {"height_m": 1.1, "style": "red_white"},
+                        "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                        (x1, barrier_lat, x2, barrier_lat),
+                    )
+
+                for island_center_lon in (
+                    township_center_lon - entrance_half_width - 0.000115,
+                    township_center_lon + entrance_half_width + 0.000115,
+                ):
+                    _insert_colony_asset(
+                        cursor,
+                        "landscape_island",
+                        "Entrance Landscape Island",
+                        {"style": "ornamental"},
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (
+                            island_center_lon - 0.000040,
+                            gate_lat - 0.000055,
+                            island_center_lon + 0.000040,
+                            gate_lat + 0.000055,
+                        ),
+                    )
+                    insert_tree(
+                        island_center_lon,
+                        gate_lat,
+                        "CadastraX3D Main Gate",
+                        0.92,
+                    )
+
+                # -----------------------------------------
+                # STEP-2 ROAD MEDIANS
+                # -----------------------------------------
+
+                median_count = 0
+
+                central_boulevard_min_lon = (
+                    x_starts[6] + plot_width
+                )
+                central_boulevard_max_lon = (
+                    central_boulevard_min_lon + vertical_road_widths[6]
+                )
+                central_boulevard_center_lon = (
+                    central_boulevard_min_lon + central_boulevard_max_lon
+                ) / 2
+
+                _insert_colony_asset(
+                    cursor,
+                    "road_median",
+                    "Central Boulevard Landscaped Median",
+                    {
+                        "surface": "landscaped",
+                        "orientation": "north_south",
+                    },
+                    "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                    (
+                        central_boulevard_center_lon - 0.000010,
+                        base_lat,
+                        central_boulevard_center_lon + 0.000010,
+                        township_max_lat,
+                    ),
+                )
+                median_count += 1
+
+                main_avenue_min_lat = (
+                    y_starts[3] + plot_height
+                )
+                main_avenue_max_lat = (
+                    main_avenue_min_lat + horizontal_road_widths[3]
+                )
+                main_avenue_center_lat = (
+                    main_avenue_min_lat + main_avenue_max_lat
+                ) / 2
+
+                _insert_colony_asset(
+                    cursor,
+                    "road_median",
+                    "Central Avenue Landscaped Median",
+                    {
+                        "surface": "landscaped",
+                        "orientation": "east_west",
+                    },
+                    "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                    (
+                        base_lon,
+                        main_avenue_center_lat - 0.000010,
+                        township_max_lon,
+                        main_avenue_center_lat + 0.000010,
+                    ),
+                )
+                median_count += 1
+
+                # Tree-lined principal axes make the township read as landscaped,
+                # while sparse spacing keeps the overview performant.
+                for row_index in range(rows):
+                    if row_index % 2 == 0:
+                        insert_tree(
+                            central_boulevard_center_lon,
+                            y_starts[row_index] + plot_height / 2,
+                            "Central Boulevard Median",
+                            0.82,
+                        )
+
+                for column_index in range(columns):
+                    if column_index % 2 == 0:
+                        insert_tree(
+                            x_starts[column_index] + plot_width / 2,
+                            main_avenue_center_lat,
+                            "Central Avenue Median",
+                            0.82,
+                        )
+
+                # -----------------------------------------
+                # STEP-2.1 REALISTIC ROAD MARKINGS
+                # -----------------------------------------
+
+                marking_count = 0
+                stop_line_count = 0
+
+                def insert_line_marking(
+                    name,
+                    marking_type,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    style="solid",
+                    width_m=0.14,
+                ):
+                    nonlocal marking_count, stop_line_count
+                    marking_count += 1
+                    if marking_type == "stop_line":
+                        stop_line_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        marking_type,
+                        name,
+                        {
+                            "style": style,
+                            "color": "white",
+                            "width_m": width_m,
+                        },
+                        "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 4326)",
+                        (x1, y1, x2, y2),
+                    )
+
+                # Main/collector roads receive full lane + edge markings.
+                # Internal 9 m residential streets stay deliberately unmarked,
+                # which is visually cleaner and closer to real colony roads.
+                marked_horizontal_rows = {3, 6}
+                marked_vertical_columns = {6}
+
+                # Break markings into individual blocks so lines stop at junctions.
+                for row_index in marked_horizontal_rows:
+                    road_min_lat = y_starts[row_index] + plot_height
+                    road_max_lat = road_min_lat + horizontal_road_widths[row_index]
+                    road_center_lat = (road_min_lat + road_max_lat) / 2
+                    edge_offset = min(
+                        horizontal_road_widths[row_index] * 0.16,
+                        0.000018,
+                    )
+
+                    for column_index in range(columns):
+                        segment_start = x_starts[column_index] + 0.000012
+                        segment_end = x_starts[column_index] + plot_width - 0.000012
+
+                        insert_line_marking(
+                            f"EW-{row_index + 1:02d} Block {column_index + 1:02d} Centre",
+                            "lane_marking",
+                            segment_start,
+                            road_center_lat,
+                            segment_end,
+                            road_center_lat,
+                            "dashed",
+                            0.15,
+                        )
+                        insert_line_marking(
+                            f"EW-{row_index + 1:02d} Block {column_index + 1:02d} South Edge",
+                            "road_edge_marking",
+                            segment_start,
+                            road_min_lat + edge_offset,
+                            segment_end,
+                            road_min_lat + edge_offset,
+                            "solid",
+                            0.12,
+                        )
+                        insert_line_marking(
+                            f"EW-{row_index + 1:02d} Block {column_index + 1:02d} North Edge",
+                            "road_edge_marking",
+                            segment_start,
+                            road_max_lat - edge_offset,
+                            segment_end,
+                            road_max_lat - edge_offset,
+                            "solid",
+                            0.12,
+                        )
+
+                for column_index in marked_vertical_columns:
+                    road_min_lon = x_starts[column_index] + plot_width
+                    road_max_lon = road_min_lon + vertical_road_widths[column_index]
+                    road_center_lon = (road_min_lon + road_max_lon) / 2
+                    edge_offset = min(
+                        vertical_road_widths[column_index] * 0.16,
+                        0.000018,
+                    )
+
+                    for row_index in range(rows):
+                        segment_start = y_starts[row_index] + 0.000012
+                        segment_end = y_starts[row_index] + plot_height - 0.000012
+
+                        insert_line_marking(
+                            f"NS-{column_index + 1:02d} Block {row_index + 1:02d} Centre",
+                            "lane_marking",
+                            road_center_lon,
+                            segment_start,
+                            road_center_lon,
+                            segment_end,
+                            "dashed",
+                            0.15,
+                        )
+                        insert_line_marking(
+                            f"NS-{column_index + 1:02d} Block {row_index + 1:02d} West Edge",
+                            "road_edge_marking",
+                            road_min_lon + edge_offset,
+                            segment_start,
+                            road_min_lon + edge_offset,
+                            segment_end,
+                            "solid",
+                            0.12,
+                        )
+                        insert_line_marking(
+                            f"NS-{column_index + 1:02d} Block {row_index + 1:02d} East Edge",
+                            "road_edge_marking",
+                            road_max_lon - edge_offset,
+                            segment_start,
+                            road_max_lon - edge_offset,
+                            segment_end,
+                            "solid",
+                            0.12,
+                        )
+
+                # Entrance boulevard keeps proper centre/edge markings.
+                insert_line_marking(
+                    "Entrance Boulevard Centre Line",
+                    "lane_marking",
+                    township_center_lon,
+                    base_lat - 0.000300,
+                    township_center_lon,
+                    base_lat - 0.000018,
+                    "dashed",
+                    0.15,
+                )
+                insert_line_marking(
+                    "Entrance Boulevard West Edge",
+                    "road_edge_marking",
+                    township_center_lon - entrance_half_width + 0.000012,
+                    base_lat - 0.000300,
+                    township_center_lon - entrance_half_width + 0.000012,
+                    base_lat - 0.000018,
+                    "solid",
+                    0.12,
+                )
+                insert_line_marking(
+                    "Entrance Boulevard East Edge",
+                    "road_edge_marking",
+                    township_center_lon + entrance_half_width - 0.000012,
+                    base_lat - 0.000300,
+                    township_center_lon + entrance_half_width - 0.000012,
+                    base_lat - 0.000018,
+                    "solid",
+                    0.12,
+                )
+
+                # -----------------------------------------
+                # ZEBRA CROSSINGS + STOP LINES
+                # -----------------------------------------
+
+                crosswalk_count = 0
+
+                major_intersections = [
+                    (6, 3),
+                    (6, 6),
+                    (3, 3),
+                    (10, 3),
+                    (3, 6),
+                    (10, 6),
+                ]
+
+                def add_crosswalk_stripes(
+                    crossing_name,
+                    road_min_lon,
+                    road_max_lon,
+                    road_min_lat,
+                    road_max_lat,
+                    approach,
+                ):
+                    nonlocal crosswalk_count
+
+                    stripe_count = 6
+                    stripe_gap = 0.000010
+                    stripe_thickness = 0.000004
+
+                    if approach in {"south", "north"}:
+                        base_cross_lat = (
+                            road_min_lat - 0.000020
+                            if approach == "south"
+                            else road_max_lat + 0.000020
+                        )
+                        for stripe in range(stripe_count):
+                            stripe_lat = (
+                                base_cross_lat
+                                + (stripe - (stripe_count - 1) / 2) * stripe_gap
+                            )
+                            crosswalk_count += 1
+                            _insert_colony_asset(
+                                cursor,
+                                "crosswalk",
+                                f"{crossing_name} {approach.title()} Stripe {stripe + 1}",
+                                {
+                                    "approach": approach,
+                                    "style": "zebra",
+                                },
+                                "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                                (
+                                    road_min_lon + 0.000006,
+                                    stripe_lat - stripe_thickness / 2,
+                                    road_max_lon - 0.000006,
+                                    stripe_lat + stripe_thickness / 2,
+                                ),
+                            )
+
+                        stop_lat = (
+                            base_cross_lat - 0.000040
+                            if approach == "south"
+                            else base_cross_lat + 0.000040
+                        )
+                        insert_line_marking(
+                            f"{crossing_name} {approach.title()} Stop Line",
+                            "stop_line",
+                            road_min_lon + 0.000006,
+                            stop_lat,
+                            road_max_lon - 0.000006,
+                            stop_lat,
+                            "solid",
+                            0.35,
+                        )
+
+                    else:
+                        base_cross_lon = (
+                            road_min_lon - 0.000020
+                            if approach == "west"
+                            else road_max_lon + 0.000020
+                        )
+                        for stripe in range(stripe_count):
+                            stripe_lon = (
+                                base_cross_lon
+                                + (stripe - (stripe_count - 1) / 2) * stripe_gap
+                            )
+                            crosswalk_count += 1
+                            _insert_colony_asset(
+                                cursor,
+                                "crosswalk",
+                                f"{crossing_name} {approach.title()} Stripe {stripe + 1}",
+                                {
+                                    "approach": approach,
+                                    "style": "zebra",
+                                },
+                                "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                                (
+                                    stripe_lon - stripe_thickness / 2,
+                                    road_min_lat + 0.000006,
+                                    stripe_lon + stripe_thickness / 2,
+                                    road_max_lat - 0.000006,
+                                ),
+                            )
+
+                        stop_lon = (
+                            base_cross_lon - 0.000040
+                            if approach == "west"
+                            else base_cross_lon + 0.000040
+                        )
+                        insert_line_marking(
+                            f"{crossing_name} {approach.title()} Stop Line",
+                            "stop_line",
+                            stop_lon,
+                            road_min_lat + 0.000006,
+                            stop_lon,
+                            road_max_lat - 0.000006,
+                            "solid",
+                            0.35,
+                        )
+
+                for crossing_index, (column_index, row_index) in enumerate(
+                    major_intersections,
+                    start=1,
+                ):
+                    road_min_lon = x_starts[column_index] + plot_width
+                    road_max_lon = road_min_lon + vertical_road_widths[column_index]
+                    road_min_lat = y_starts[row_index] + plot_height
+                    road_max_lat = road_min_lat + horizontal_road_widths[row_index]
+
+                    for approach in ("south", "north", "west", "east"):
+                        add_crosswalk_stripes(
+                            f"Junction {crossing_index:02d}",
+                            road_min_lon,
+                            road_max_lon,
+                            road_min_lat,
+                            road_max_lat,
+                            approach,
+                        )
+
+                # Dedicated mid-block pedestrian crossings for schools/hospitals.
+                def add_midblock_crosswalk_ew(name, center_lon, row_index):
+                    nonlocal_crossing = None
+                    road_min_lat = y_starts[row_index] + plot_height
+                    road_max_lat = road_min_lat + horizontal_road_widths[row_index]
+                    stripe_count = 6
+                    stripe_gap = 0.000010
+                    stripe_half_width = 0.000003
+
+                    for stripe in range(stripe_count):
+                        stripe_lon = (
+                            center_lon
+                            + (stripe - (stripe_count - 1) / 2) * stripe_gap
+                        )
+                        # crosswalk_count is in the outer function scope
+                        nonlocal_crossing = stripe
+                        _insert_colony_asset(
+                            cursor,
+                            "crosswalk",
+                            f"{name} Stripe {stripe + 1}",
+                            {"zone": name, "style": "zebra"},
+                            "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                            (
+                                stripe_lon - stripe_half_width,
+                                road_min_lat + 0.000004,
+                                stripe_lon + stripe_half_width,
+                                road_max_lat - 0.000004,
+                            ),
+                        )
+                    return stripe_count
+
+                crosswalk_count += add_midblock_crosswalk_ew(
+                    "School S01 Crossing",
+                    x_starts[0] + plot_width * 0.56,
+                    0,
+                )
+                crosswalk_count += add_midblock_crosswalk_ew(
+                    "School S02 Crossing",
+                    x_starts[14] + plot_width * 0.44,
+                    8,
+                )
+                crosswalk_count += add_midblock_crosswalk_ew(
+                    "Hospital H01 Crossing",
+                    x_starts[13] + plot_width * 0.56,
+                    0,
+                )
+                crosswalk_count += add_midblock_crosswalk_ew(
+                    "Hospital H02 Crossing",
+                    x_starts[1] + plot_width * 0.44,
+                    7,
+                )
+
+                # -----------------------------------------
+                # ROAD-SURFACE TEXT + DIRECTION ARROWS
+                # -----------------------------------------
+
+                road_text_count = 0
+
+                def insert_road_text(
+                    name,
+                    text_value,
+                    longitude,
+                    latitude,
+                    orientation="east_west",
+                    width_m=13.0,
+                    height_m=4.2,
+                ):
+                    nonlocal road_text_count
+                    road_text_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "road_text",
+                        name,
+                        {
+                            "text": text_value,
+                            "orientation": orientation,
+                            "width_m": width_m,
+                            "height_m": height_m,
+                            "paint": "white",
+                        },
+                        "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                        (longitude, latitude),
+                    )
+
+                # Warnings are intentionally separate and large, like actual road paint.
+                insert_road_text(
+                    "School S01 Warning",
+                    "SCHOOL\nAHEAD",
+                    x_starts[0] + plot_width / 2,
+                    y_starts[0] + plot_height + horizontal_road_widths[0] / 2,
+                    "east_west",
+                    15.0,
+                    5.2,
+                )
+                insert_road_text(
+                    "School S02 Warning",
+                    "SCHOOL\nAHEAD",
+                    x_starts[14] + plot_width / 2,
+                    y_starts[8] + plot_height + horizontal_road_widths[8] / 2,
+                    "east_west",
+                    15.0,
+                    5.2,
+                )
+                insert_road_text(
+                    "Hospital H01 Warning",
+                    "HOSPITAL",
+                    x_starts[13] + plot_width / 2,
+                    y_starts[0] + plot_height + horizontal_road_widths[0] / 2,
+                    "east_west",
+                    15.0,
+                    4.2,
+                )
+                insert_road_text(
+                    "Hospital H02 Warning",
+                    "HOSPITAL",
+                    x_starts[1] + plot_width / 2,
+                    y_starts[7] + plot_height + horizontal_road_widths[7] / 2,
+                    "east_west",
+                    15.0,
+                    4.2,
+                )
+                insert_road_text(
+                    "School S01 Slow Marking",
+                    "SLOW",
+                    x_starts[0] + plot_width * 0.82,
+                    y_starts[0] + plot_height + horizontal_road_widths[0] / 2,
+                    "east_west",
+                    8.0,
+                    3.6,
+                )
+                insert_road_text(
+                    "School S02 Slow Marking",
+                    "SLOW",
+                    x_starts[14] + plot_width * 0.18,
+                    y_starts[8] + plot_height + horizontal_road_widths[8] / 2,
+                    "east_west",
+                    8.0,
+                    3.6,
+                )
+                insert_road_text(
+                    "Hospital H01 Slow Marking",
+                    "SLOW",
+                    x_starts[13] + plot_width * 0.82,
+                    y_starts[0] + plot_height + horizontal_road_widths[0] / 2,
+                    "east_west",
+                    8.0,
+                    3.6,
+                )
+                insert_road_text(
+                    "Hospital H02 Slow Marking",
+                    "SLOW",
+                    x_starts[1] + plot_width * 0.18,
+                    y_starts[7] + plot_height + horizontal_road_widths[7] / 2,
+                    "east_west",
+                    8.0,
+                    3.6,
+                )
+                insert_road_text(
+                    "Main Entrance Speed Advisory",
+                    "SLOW\n30",
+                    township_center_lon,
+                    base_lat - 0.000175,
+                    "north_south",
+                    9.0,
+                    5.5,
+                )
+
+                road_arrow_count = 0
+                arrow_points = [
+                    (township_center_lon, base_lat - 0.000080, "north_south", 0),
+                    (township_center_lon, base_lat - 0.000245, "north_south", 0),
+                    (x_starts[2] + plot_width / 2, main_avenue_center_lat, "east_west", 0),
+                    (x_starts[12] + plot_width / 2, main_avenue_center_lat, "east_west", 180),
+                    (central_boulevard_center_lon, y_starts[1] + plot_height / 2, "north_south", 0),
+                    (central_boulevard_center_lon, y_starts[8] + plot_height / 2, "north_south", 180),
+                ]
+
+                for arrow_index, (longitude, latitude, orientation, rotation_deg) in enumerate(
+                    arrow_points,
+                    start=1,
+                ):
+                    road_arrow_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "road_arrow",
+                        f"Directional Arrow {arrow_index:02d}",
+                        {
+                            "orientation": orientation,
+                            "rotation_deg": rotation_deg,
+                            "width_m": 3.2,
+                            "height_m": 6.5,
+                        },
+                        "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                        (longitude, latitude),
+                    )
+
+                # -----------------------------------------
+                # TRAFFIC SIGNALS AT MAJOR CROSSROADS
+                # -----------------------------------------
+
+                traffic_signal_count = 0
+                signal_intersections = [
+                    (6, 3),
+                    (6, 6),
+                    (3, 3),
+                    (10, 3),
+                ]
+
+                facing_vectors = {
+                    "NE": (0.000020, 0.000020),
+                    "NW": (-0.000020, 0.000020),
+                    "SE": (0.000020, -0.000020),
+                    "SW": (-0.000020, -0.000020),
+                }
+
+                for junction_index, (column_index, row_index) in enumerate(
+                    signal_intersections,
+                    start=1,
+                ):
+                    road_min_lon = x_starts[column_index] + plot_width
+                    road_max_lon = road_min_lon + vertical_road_widths[column_index]
+                    road_min_lat = y_starts[row_index] + plot_height
+                    road_max_lat = road_min_lat + horizontal_road_widths[row_index]
+
+                    signal_positions = [
+                        (road_min_lon - 0.000010, road_min_lat - 0.000010, "NE"),
+                        (road_max_lon + 0.000010, road_min_lat - 0.000010, "NW"),
+                        (road_min_lon - 0.000010, road_max_lat + 0.000010, "SE"),
+                        (road_max_lon + 0.000010, road_max_lat + 0.000010, "SW"),
+                    ]
+
+                    for longitude, latitude, facing in signal_positions:
+                        traffic_signal_count += 1
+                        delta_lon, delta_lat = facing_vectors[facing]
+                        _insert_colony_asset(
+                            cursor,
+                            "traffic_signal",
+                            f"Traffic Signal TS{traffic_signal_count:02d}",
+                            {
+                                "junction": junction_index,
+                                "facing": facing,
+                                "height_m": 5.2,
+                                "arm_lon": longitude + delta_lon,
+                                "arm_lat": latitude + delta_lat,
+                                "display_state": "static_lenses",
+                            },
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (longitude, latitude),
+                        )
+
+                # -----------------------------------------
+                # MODERN TWO-SIDED STREET LIGHTS
                 # -----------------------------------------
 
                 light_count = 0
 
-                # Lights along each horizontal corridor.
-                for row_index in range(rows - 1):
-
-                    road_center_lat = (
-                        y_starts[row_index]
-                        + plot_height
-                        + horizontal_road_widths[row_index] / 2
-                    )
-
-                    for column_index in range(columns):
-
-                        light_lon = (
-                            x_starts[column_index]
-                            + plot_width / 2
-                        )
-
-                        light_count += 1
-
-                        _insert_colony_asset(
-                            cursor,
-                            "streetlight",
-                            f"Street Light L{light_count:03d}",
-                            {
-                                "height_m": 8.0,
-                                "status": "planned",
-                            },
-                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
-                            (
-                                light_lon,
-                                road_center_lat,
-                            ),
-                        )
-
-                # Lights along each north-south street.
-                for column_index in range(columns - 1):
-
-                    road_center_lon = (
-                        x_starts[column_index]
-                        + plot_width
-                        + vertical_road_width / 2
-                    )
-
-                    for row_index in range(rows):
-
-                        light_lat = (
-                            y_starts[row_index]
-                            + plot_height / 2
-                        )
-
-                        light_count += 1
-
-                        _insert_colony_asset(
-                            cursor,
-                            "streetlight",
-                            f"Street Light L{light_count:03d}",
-                            {
-                                "height_m": 8.0,
-                                "status": "planned",
-                            },
-                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
-                            (
-                                road_center_lon,
-                                light_lat,
-                            ),
-                        )
-
-                # A few lights on the entrance approach.
-                for step in range(4):
-
+                def insert_modern_light(
+                    pole_lon,
+                    pole_lat,
+                    lamp_lon,
+                    lamp_lat,
+                    height_m,
+                    road_name,
+                    side,
+                ):
+                    nonlocal light_count
                     light_count += 1
-
                     _insert_colony_asset(
                         cursor,
                         "streetlight",
-                        f"Street Light L{light_count:03d}",
+                        f"Modern Street Light L{light_count:03d}",
                         {
-                            "height_m": 9.0,
-                            "status": "planned",
+                            "height_m": height_m,
+                            "status": "operational",
+                            "style": "modern_led",
+                            "road_name": road_name,
+                            "side": side,
+                            "lamp_lon": lamp_lon,
+                            "lamp_lat": lamp_lat,
                         },
                         "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
-                        (
-                            colony_center_lon,
-                            base_lat
-                            - 0.000045
-                            - step * 0.000050,
-                        ),
+                        (pole_lon, pole_lat),
+                    )
+
+                # Both sides of all east-west roads. Spacing is roughly two plots.
+                for row_index in range(rows - 1):
+                    road_min_lat = y_starts[row_index] + plot_height
+                    road_max_lat = road_min_lat + horizontal_road_widths[row_index]
+                    is_main = row_index == 3
+                    is_collector = row_index == 6
+                    height_m = 10.0 if is_main else (9.0 if is_collector else 7.5)
+                    road_name = (
+                        "Township Central Avenue"
+                        if is_main
+                        else (
+                            "South Collector Road"
+                            if is_collector
+                            else f"Residential Street EW-{row_index + 1:02d}"
+                        )
+                    )
+
+                    for column_index in range(0, columns, 2):
+                        longitude = x_starts[column_index] + plot_width / 2
+
+                        south_pole_lat = road_min_lat - 0.000010
+                        insert_modern_light(
+                            longitude,
+                            south_pole_lat,
+                            longitude,
+                            south_pole_lat + 0.000025,
+                            height_m,
+                            road_name,
+                            "south",
+                        )
+
+                        north_pole_lat = road_max_lat + 0.000010
+                        insert_modern_light(
+                            longitude,
+                            north_pole_lat,
+                            longitude,
+                            north_pole_lat - 0.000025,
+                            height_m,
+                            road_name,
+                            "north",
+                        )
+
+                # Both sides of north-south roads.
+                for column_index in range(columns - 1):
+                    road_min_lon = x_starts[column_index] + plot_width
+                    road_max_lon = road_min_lon + vertical_road_widths[column_index]
+                    is_main = column_index == 6
+                    height_m = 10.0 if is_main else 7.5
+                    road_name = (
+                        "North-South Central Boulevard"
+                        if is_main
+                        else f"Residential Street NS-{column_index + 1:02d}"
+                    )
+
+                    for row_index in range(0, rows, 2):
+                        latitude = y_starts[row_index] + plot_height / 2
+
+                        west_pole_lon = road_min_lon - 0.000010
+                        insert_modern_light(
+                            west_pole_lon,
+                            latitude,
+                            west_pole_lon + 0.000025,
+                            latitude,
+                            height_m,
+                            road_name,
+                            "west",
+                        )
+
+                        east_pole_lon = road_max_lon + 0.000010
+                        insert_modern_light(
+                            east_pole_lon,
+                            latitude,
+                            east_pole_lon - 0.000025,
+                            latitude,
+                            height_m,
+                            road_name,
+                            "east",
+                        )
+
+                # Entrance boulevard gets paired premium lights.
+                for step in range(6):
+                    latitude = base_lat - 0.000040 - step * 0.000045
+                    west_pole_lon = township_center_lon - entrance_half_width - 0.000010
+                    east_pole_lon = township_center_lon + entrance_half_width + 0.000010
+
+                    insert_modern_light(
+                        west_pole_lon,
+                        latitude,
+                        township_center_lon - entrance_half_width + 0.000018,
+                        latitude,
+                        10.0,
+                        "Main Township Entrance Boulevard",
+                        "west",
+                    )
+                    insert_modern_light(
+                        east_pole_lon,
+                        latitude,
+                        township_center_lon + entrance_half_width - 0.000018,
+                        latitude,
+                        10.0,
+                        "Main Township Entrance Boulevard",
+                        "east",
                     )
 
         return {
             "success": True,
-            "message": "Planned Bhumi3D colony generated successfully",
-            "version": "planned_colony_v1",
-            "plot_count": 50,
-            "apartment_plot_count": 20,
-            "villa_plot_count": 24,
+            "message": "Bhumi3D Township V3 Step 3.4 generated successfully",
+            "version": "township_v3_step3_4",
+            "plot_count": 150,
+            "apartment_plot_count": 50,
+            "residential_plot_count": 80,
+            "amenity_plot_count": 20,
             "school_count": 2,
-            "office_count": 1,
-            "park_count": 2,
-            "parking_count": 1,
-            "apartment_building_count": 20,
+            "hospital_count": 2,
+            "gym_count": 1,
+            "shopping_count": 1,
+            "park_count": 4,
+            "parking_count": 2,
+            "apartment_building_count": 50,
+            "residential_building_count": residential_building_count,
+            "civic_building_count": civic_building_count,
             "building_feature_count": building_feature_count,
             "road_count": road_count,
             "streetlight_count": light_count,
+            "road_marking_count": marking_count,
+            "crosswalk_stripe_count": crosswalk_count,
+            "road_text_count": road_text_count,
+            "road_arrow_count": road_arrow_count,
+            "traffic_signal_count": traffic_signal_count,
+            "stop_line_count": stop_line_count,
+            "median_count": median_count,
+            "tree_count": tree_count,
+            "park_path_count": park_path_count,
+            "parking_bay_count": parking_bay_count,
+            "special_visual_count": special_visual_count,
+            "sidewalk_count": sidewalk_count,
+            "landscape_strip_count": landscape_strip_count,
+            "park_bench_count": park_bench_count,
+            "ground_asset_count": ground_asset_count,
+            "green_belt_count": green_belt_count,
+            "entrance_detail_count": entrance_detail_count,
+            "entrance_name": "CadastraX3D Township",
             "apartment_floor_total": sum(apartment_floors),
             "highest_apartment_floors": max(apartment_floors),
+            "future_apartment_capacity_at_4_units_per_floor": (
+                sum(apartment_floors) * 4
+            ),
             "note": (
-                "Apartment ownership volumes are generated in the "
-                "next vertical-colony milestone."
+                "Step 3.4 adds distinct civic campuses, stronger apartment and villa facade families, "
+                "recognisable hospital/school/retail/gym frontage, upgraded tower and house entrances, "
+                "and a more monumental CADASTRAX3D TOWNSHIP gateway while preserving City/Cadastral modes."
             ),
         }
 
-    except Exception as error:
+    except HTTPException:
+        raise
 
+    except Exception as error:
         raise HTTPException(
             status_code=500,
-            detail=f"Colony generation error: {error}",
+            detail=f"Township generation error: {error}",
         )
 
 
