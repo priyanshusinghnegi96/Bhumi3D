@@ -98,6 +98,22 @@ function buildHierarchy(scene, gisData) {
   };
 }
 
+function getNextBuildingCode(hierarchy) {
+  let highestNumber = 0;
+
+  for (const plot of hierarchy.plots || []) {
+    for (const building of plot.buildings || []) {
+      const match = String(building.code || "").match(/^B(\d+)$/i);
+
+      if (match) {
+        highestNumber = Math.max(highestNumber, Number(match[1]));
+      }
+    }
+  }
+
+  return `B${String(highestNumber + 1).padStart(2, "0")}`;
+}
+
 function App() {
   const [selectedProperty, setSelectedProperty] = useState(null);
 
@@ -143,6 +159,9 @@ function App() {
   const [footprintPicking, setFootprintPicking] = useState(false);
   const [footprintPickTrigger, setFootprintPickTrigger] = useState(0);
   const [footprintCancelTrigger, setFootprintCancelTrigger] = useState(0);
+  const [footprintUndoTrigger, setFootprintUndoTrigger] = useState(0);
+  const [footprintFinishTrigger, setFootprintFinishTrigger] = useState(0);
+  const [footprintPointCount, setFootprintPointCount] = useState(0);
   const [footprintTarget, setFootprintTarget] = useState("property");
 
   const [showBuildingCreator, setShowBuildingCreator] = useState(false);
@@ -197,10 +216,7 @@ function App() {
     floors: "4",
     units_per_floor: "4",
     floor_height: "3.2",
-    min_lon: "",
-    min_lat: "",
-    max_lon: "",
-    max_lat: "",
+    footprint: [],
   });
 
   useEffect(() => {
@@ -336,34 +352,41 @@ function App() {
 
   function startBuildingFootprintPicking() {
     setFootprintTarget("building");
+    setFootprintPointCount(0);
     setBuildingMessage("");
+    setBuildingForm((previous) => ({
+      ...previous,
+      footprint: [],
+    }));
     setShowBuildingCreator(false);
     setFootprintPicking(true);
     setFootprintPickTrigger((value) => value + 1);
   }
 
-  function handleFootprintPicked(bounds) {
+  function handleFootprintPicked(result) {
     if (footprintTarget === "building") {
+      const coordinates = result.coordinates || [];
+
       setBuildingForm((previous) => ({
         ...previous,
-        min_lon: bounds.minLon.toFixed(7),
-        min_lat: bounds.minLat.toFixed(7),
-        max_lon: bounds.maxLon.toFixed(7),
-        max_lat: bounds.maxLat.toFixed(7),
+        footprint: coordinates,
       }));
 
+      setFootprintPointCount(coordinates.length);
       setFootprintPicking(false);
-      setBuildingMessage("✓ Building footprint selected from the 3D map.");
+      setBuildingMessage(
+        `✓ Polygon footprint selected with ${coordinates.length} vertices.`
+      );
       setShowBuildingCreator(true);
       return;
     }
 
     setForm((previous) => ({
       ...previous,
-      min_lon: bounds.minLon.toFixed(7),
-      min_lat: bounds.minLat.toFixed(7),
-      max_lon: bounds.maxLon.toFixed(7),
-      max_lat: bounds.maxLat.toFixed(7),
+      min_lon: result.minLon.toFixed(7),
+      min_lat: result.minLat.toFixed(7),
+      max_lon: result.maxLon.toFixed(7),
+      max_lat: result.maxLat.toFixed(7),
     }));
 
     setFootprintPicking(false);
@@ -371,8 +394,24 @@ function App() {
     setShowAddProperty(true);
   }
 
+  function handleFootprintProgress(result) {
+    if (footprintTarget === "building") {
+      setFootprintPointCount(result.pointCount || 0);
+    }
+  }
+
+  function undoBuildingFootprintPoint() {
+    setFootprintUndoTrigger((value) => value + 1);
+  }
+
+  function finishBuildingFootprint() {
+    if (footprintPointCount < 3) return;
+    setFootprintFinishTrigger((value) => value + 1);
+  }
+
   function cancelFootprintPicking() {
     setFootprintPicking(false);
+    setFootprintPointCount(0);
     setFootprintCancelTrigger((value) => value + 1);
 
     if (footprintTarget === "building") {
@@ -529,16 +568,20 @@ function App() {
 
   function openBuildingCreator() {
     const firstPlot = hierarchy.plots[0];
+    const suggestedCode = getNextBuildingCode(hierarchy);
 
     setBuildingMessage("");
     setBuildingResult(null);
+    setFootprintPointCount(0);
 
-    if (firstPlot) {
-      setBuildingForm((previous) => ({
-        ...previous,
-        parent_ulpin: previous.parent_ulpin || firstPlot.ulpin,
-      }));
-    }
+    setBuildingForm((previous) => ({
+      ...previous,
+      parent_ulpin:
+        firstPlot?.ulpin ||
+        previous.parent_ulpin,
+      building_code: suggestedCode,
+      footprint: [],
+    }));
 
     setShowBuildingCreator(true);
   }
@@ -555,20 +598,17 @@ function App() {
   async function handleCreateBuilding(event) {
     event.preventDefault();
 
-    if (
-      buildingForm.min_lon === "" ||
-      buildingForm.min_lat === "" ||
-      buildingForm.max_lon === "" ||
-      buildingForm.max_lat === ""
-    ) {
+    if ((buildingForm.footprint || []).length < 3) {
       setBuildingMessage(
-        "Pick the building footprint on the map before generating."
+        "Draw at least 3 footprint points on the map before generating."
       );
       return;
     }
 
     setIsCreatingBuilding(true);
-    setBuildingMessage("Creating building and vertical properties...");
+    setBuildingMessage(
+      "Validating polygon and creating vertical properties..."
+    );
     setBuildingResult(null);
 
     try {
@@ -578,10 +618,7 @@ function App() {
         floors: Number(buildingForm.floors),
         units_per_floor: Number(buildingForm.units_per_floor),
         floor_height: Number(buildingForm.floor_height),
-        min_lon: Number(buildingForm.min_lon),
-        min_lat: Number(buildingForm.min_lat),
-        max_lon: Number(buildingForm.max_lon),
-        max_lat: Number(buildingForm.max_lat),
+        footprint: buildingForm.footprint,
       });
 
       setBackendConnected(true);
@@ -930,24 +967,77 @@ function App() {
             onValidationResult={handleValidationResult}
             footprintPickTrigger={footprintPickTrigger}
             footprintCancelTrigger={footprintCancelTrigger}
+            footprintUndoTrigger={footprintUndoTrigger}
+            footprintFinishTrigger={footprintFinishTrigger}
+            footprintMode={
+              footprintTarget === "building"
+                ? "polygon"
+                : "rectangle"
+            }
             onFootprintPicked={handleFootprintPicked}
+            onFootprintProgress={handleFootprintProgress}
           />
 
           {footprintPicking && (
             <div className="map-instruction">
               <strong>
                 {footprintTarget === "building"
-                  ? "Select Building Footprint"
+                  ? "Draw Building Polygon"
                   : "Select Property Footprint"}
               </strong>
 
-              <span>
-                Click one corner, then click the opposite corner.
-              </span>
+              {footprintTarget === "building" ? (
+                <>
+                  <span>
+                    Left-click each building corner. A live preview follows
+                    your cursor.
+                  </span>
 
-              <button type="button" onClick={cancelFootprintPicking}>
-                Cancel
-              </button>
+                  <span className="map-point-count">
+                    {footprintPointCount} point
+                    {footprintPointCount === 1 ? "" : "s"} selected
+                  </span>
+
+                  <div className="map-instruction-actions">
+                    <button
+                      type="button"
+                      onClick={undoBuildingFootprintPoint}
+                      disabled={footprintPointCount === 0}
+                    >
+                      Undo
+                    </button>
+
+                    <button
+                      type="button"
+                      className="finish-button"
+                      onClick={finishBuildingFootprint}
+                      disabled={footprintPointCount < 3}
+                    >
+                      Finish Footprint
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={cancelFootprintPicking}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span>
+                    Click one corner, then click the opposite corner.
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={cancelFootprintPicking}
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
             </div>
           )}
         </section>
@@ -984,11 +1074,11 @@ function App() {
               onSubmit={handleCreateBuilding}
             >
               <div className="prototype-notice">
-                <strong>Bhumi3D Building Creator V1</strong>
+                <strong>Bhumi3D Building Creator V2</strong>
                 <span>
-                  V1 uses a rectangular footprint selected with two
-                  opposite map corners. Bhumi3D validates that the whole
-                  building stays inside its selected parent plot.
+                  Draw a real polygon with 3 or more map points. PostGIS
+                  validates polygon geometry, parent-plot containment, and
+                  building overlap before generating any 3D properties.
                 </span>
               </div>
 
@@ -1070,16 +1160,17 @@ function App() {
               </button>
 
               <div className="building-footprint-summary">
-                {buildingForm.min_lon === "" ? (
-                  <span>No footprint selected yet.</span>
+                {(buildingForm.footprint || []).length < 3 ? (
+                  <span>No completed polygon footprint selected yet.</span>
                 ) : (
                   <>
-                    <strong>Footprint selected</strong>
+                    <strong>Polygon footprint selected</strong>
                     <span>
-                      {buildingForm.min_lon}, {buildingForm.min_lat}
+                      {buildingForm.footprint.length} vertices
                     </span>
                     <span>
-                      to {buildingForm.max_lon}, {buildingForm.max_lat}
+                      PostGIS will validate containment and building overlap
+                      when you generate.
                     </span>
                   </>
                 )}
@@ -1095,6 +1186,12 @@ function App() {
                   <div>Building: {buildingResult.building}</div>
                   <div>Parent: {buildingResult.parent_ulpin}</div>
                   <div>Floors: {buildingResult.floors}</div>
+                  <div>
+                    Footprint: {buildingResult.footprint_vertices} vertices
+                  </div>
+                  <div>
+                    Area: {buildingResult.footprint_area_m2} m²
+                  </div>
                   <div>
                     3D properties: {buildingResult.generated_property_count}
                   </div>

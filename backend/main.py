@@ -49,7 +49,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="0.8.0",
+    version="0.9.0",
 )
 
 
@@ -138,6 +138,12 @@ class VerticalGenerationRequest(BaseModel):
     )
 
 
+class BuildingFootprintPoint(BaseModel):
+
+    longitude: float
+    latitude: float
+
+
 class BuildingCreateRequest(BaseModel):
 
     parent_ulpin: str
@@ -162,10 +168,7 @@ class BuildingCreateRequest(BaseModel):
         le=20,
     )
 
-    min_lon: float
-    min_lat: float
-    max_lon: float
-    max_lat: float
+    footprint: list[BuildingFootprintPoint]
 
 
 # =========================================================
@@ -179,7 +182,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "0.8.0",
+        "version": "0.9.0",
     }
 
 
@@ -1324,13 +1327,13 @@ def get_gis_features():
 def create_building(request: BuildingCreateRequest):
 
     """
-    Create one rectangular building footprint directly from
-    the Bhumi3D map and generate its apartment volumes.
+    Create one polygonal building footprint directly from
+    the Bhumi3D map and generate apartment volumes.
 
-    The user selects two opposite corners in Cesium. The
-    backend validates the footprint against the selected
-    parent parcel, stores it as a GIS building feature, and
-    creates the requested floors and units in one transaction.
+    Building Creator V2 accepts three or more map vertices.
+    PostGIS validates polygon geometry, parent-plot
+    containment, and overlap with existing building
+    footprints before anything is committed.
     """
 
     building_code = request.building_code.strip().upper()
@@ -1348,44 +1351,122 @@ def create_building(request: BuildingCreateRequest):
             detail="Parent ULPIN cannot be empty",
         )
 
-    if request.max_lon <= request.min_lon:
+    if len(request.footprint) < 3:
         raise HTTPException(
             status_code=400,
-            detail="max_lon must be greater than min_lon",
+            detail="A building footprint needs at least 3 points",
         )
 
-    if request.max_lat <= request.min_lat:
+    if len(request.footprint) > 100:
         raise HTTPException(
             status_code=400,
-            detail="max_lat must be greater than min_lat",
+            detail="Building footprint is limited to 100 points",
         )
+
+    coordinates = [
+        [point.longitude, point.latitude]
+        for point in request.footprint
+    ]
+
+    if coordinates[0] != coordinates[-1]:
+        coordinates.append(coordinates[0])
+
+    footprint_geojson = json.dumps(
+        {
+            "type": "Polygon",
+            "coordinates": [coordinates],
+        }
+    )
 
     try:
         with get_connection() as connection:
             with connection.cursor() as cursor:
 
-                # -----------------------------------------
-                # VERIFY PARENT AND FOOTPRINT CONTAINMENT
-                # -----------------------------------------
+                cursor.execute(
+                    """
+                    WITH candidate AS (
+                        SELECT ST_SetSRID(
+                            ST_GeomFromGeoJSON(%s),
+                            4326
+                        ) AS geom
+                    )
+                    SELECT
+                        ST_IsValid(geom),
+                        ST_IsValidReason(geom)
+                    FROM candidate;
+                    """,
+                    (footprint_geojson,),
+                )
+
+                validity_check = cursor.fetchone()
+
+                if not bool(validity_check[0]):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Invalid building polygon: "
+                            f"{validity_check[1]}"
+                        ),
+                    )
 
                 cursor.execute(
                     """
+                    WITH candidate AS (
+                        SELECT ST_SetSRID(
+                            ST_GeomFromGeoJSON(%s),
+                            4326
+                        ) AS geom
+                    )
                     SELECT
-                        name,
+                        ST_Area(geom::geography),
+                        ST_XMin(ST_Envelope(geom)),
+                        ST_YMin(ST_Envelope(geom)),
+                        ST_XMax(ST_Envelope(geom)),
+                        ST_YMax(ST_Envelope(geom))
+                    FROM candidate;
+                    """,
+                    (footprint_geojson,),
+                )
+
+                geometry_metrics = cursor.fetchone()
+
+                footprint_area_m2 = float(
+                    geometry_metrics[0] or 0
+                )
+
+                if footprint_area_m2 < 1.0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Building footprint is too small. "
+                            "Draw an area larger than 1 m²."
+                        ),
+                    )
+
+                min_lon = float(geometry_metrics[1])
+                min_lat = float(geometry_metrics[2])
+                max_lon = float(geometry_metrics[3])
+                max_lat = float(geometry_metrics[4])
+
+                cursor.execute(
+                    """
+                    WITH candidate AS (
+                        SELECT ST_SetSRID(
+                            ST_GeomFromGeoJSON(%s),
+                            4326
+                        ) AS geom
+                    )
+                    SELECT
+                        parcels.name,
                         ST_CoveredBy(
-                            ST_MakeEnvelope(
-                                %s, %s, %s, %s, 4326
-                            ),
-                            geometry
+                            candidate.geom,
+                            parcels.geometry
                         )
-                    FROM parcels
-                    WHERE ulpin = %s;
+                    FROM parcels, candidate
+                    WHERE parcels.ulpin = %s;
                     """,
                     (
-                        request.min_lon,
-                        request.min_lat,
-                        request.max_lon,
-                        request.max_lat,
+                        footprint_geojson,
                         parent_ulpin,
                     ),
                 )
@@ -1407,10 +1488,6 @@ def create_building(request: BuildingCreateRequest):
                         ),
                     )
 
-                # -----------------------------------------
-                # PREVENT DUPLICATE BUILDING CODES
-                # -----------------------------------------
-
                 cursor.execute(
                     """
                     SELECT COUNT(*)
@@ -1418,7 +1495,10 @@ def create_building(request: BuildingCreateRequest):
                     WHERE parent_ulpin = %s
                       AND building = %s;
                     """,
-                    (parent_ulpin, building_code),
+                    (
+                        parent_ulpin,
+                        building_code,
+                    ),
                 )
 
                 property_count = cursor.fetchone()[0]
@@ -1428,9 +1508,14 @@ def create_building(request: BuildingCreateRequest):
                     SELECT COUNT(*)
                     FROM imported_features
                     WHERE properties ->> 'parent_ulpin' = %s
-                      AND UPPER(properties ->> 'building_code') = %s;
+                      AND UPPER(
+                          properties ->> 'building_code'
+                      ) = %s;
                     """,
-                    (parent_ulpin, building_code),
+                    (
+                        parent_ulpin,
+                        building_code,
+                    ),
                 )
 
                 feature_count = cursor.fetchone()[0]
@@ -1444,9 +1529,69 @@ def create_building(request: BuildingCreateRequest):
                         ),
                     )
 
-                # -----------------------------------------
-                # STORE BUILDING FOOTPRINT
-                # -----------------------------------------
+                cursor.execute(
+                    """
+                    WITH candidate AS (
+                        SELECT ST_SetSRID(
+                            ST_GeomFromGeoJSON(%s),
+                            4326
+                        ) AS geom
+                    )
+                    SELECT
+                        imported_features.properties
+                            ->> 'building_code',
+                        imported_features.properties
+                            ->> 'parent_ulpin',
+                        ST_Area(
+                            ST_Intersection(
+                                imported_features.geometry,
+                                candidate.geom
+                            )::geography
+                        ) AS overlap_area_m2
+                    FROM imported_features, candidate
+                    WHERE imported_features.geometry IS NOT NULL
+                      AND imported_features.properties
+                            ->> 'building_code' IS NOT NULL
+                      AND ST_Intersects(
+                            imported_features.geometry,
+                            candidate.geom
+                      )
+                      AND NOT ST_Touches(
+                            imported_features.geometry,
+                            candidate.geom
+                      )
+                      AND ST_Area(
+                            ST_Intersection(
+                                imported_features.geometry,
+                                candidate.geom
+                            )::geography
+                      ) > 0.05
+                    ORDER BY overlap_area_m2 DESC
+                    LIMIT 1;
+                    """,
+                    (footprint_geojson,),
+                )
+
+                overlap = cursor.fetchone()
+
+                if overlap is not None:
+                    other_building = (
+                        overlap[0]
+                        or "another building"
+                    )
+                    other_parent = (
+                        overlap[1]
+                        or "unknown plot"
+                    )
+
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Building footprint overlaps {other_building} "
+                            f"on {other_parent} "
+                            f"({float(overlap[2]):.2f} m² overlap)."
+                        ),
+                    )
 
                 metadata = {
                     "name": f"Building {building_code}",
@@ -1456,8 +1601,15 @@ def create_building(request: BuildingCreateRequest):
                     "floors": request.floors,
                     "units_per_floor": request.units_per_floor,
                     "floor_height": request.floor_height,
-                    "height_m": request.floors * request.floor_height,
-                    "source": "Bhumi3D Building Creator",
+                    "height_m": (
+                        request.floors
+                        * request.floor_height
+                    ),
+                    "footprint_area_m2": footprint_area_m2,
+                    "footprint_vertices": len(
+                        request.footprint
+                    ),
+                    "source": "Bhumi3D Building Creator V2",
                 }
 
                 cursor.execute(
@@ -1472,10 +1624,11 @@ def create_building(request: BuildingCreateRequest):
                     VALUES (
                         'Building Footprint',
                         %s,
-                        'Bhumi3D Building Creator',
+                        'Bhumi3D Building Creator V2',
                         %s::jsonb,
-                        ST_MakeEnvelope(
-                            %s, %s, %s, %s, 4326
+                        ST_SetSRID(
+                            ST_GeomFromGeoJSON(%s),
+                            4326
                         )
                     )
                     RETURNING id;
@@ -1483,67 +1636,105 @@ def create_building(request: BuildingCreateRequest):
                     (
                         f"Building {building_code}",
                         json.dumps(metadata),
-                        request.min_lon,
-                        request.min_lat,
-                        request.max_lon,
-                        request.max_lat,
+                        footprint_geojson,
                     ),
                 )
 
                 feature_id = cursor.fetchone()[0]
 
-                # -----------------------------------------
-                # REGULAR UNIT GRID
-                # -----------------------------------------
-
-                columns = math.ceil(
-                    math.sqrt(request.units_per_floor)
-                )
-
-                rows = math.ceil(
-                    request.units_per_floor / columns
-                )
-
-                cell_width = (
-                    request.max_lon - request.min_lon
-                ) / columns
-
-                cell_height = (
-                    request.max_lat - request.min_lat
-                ) / rows
+                strip_width = (
+                    max_lon - min_lon
+                ) / request.units_per_floor
 
                 created = []
 
-                for floor_number in range(1, request.floors + 1):
-                    floor_code = str(floor_number).zfill(2)
-                    z_min = (floor_number - 1) * request.floor_height
-                    z_max = floor_number * request.floor_height
+                for floor_number in range(
+                    1,
+                    request.floors + 1,
+                ):
+                    floor_code = str(
+                        floor_number
+                    ).zfill(2)
+
+                    z_min = (
+                        floor_number - 1
+                    ) * request.floor_height
+
+                    z_max = (
+                        floor_number
+                        * request.floor_height
+                    )
 
                     for unit_index in range(
                         1,
                         request.units_per_floor + 1,
                     ):
-                        grid_index = unit_index - 1
-                        row_index = grid_index // columns
-                        column_index = grid_index % columns
 
                         unit_min_lon = (
-                            request.min_lon
-                            + column_index * cell_width
+                            min_lon
+                            + (
+                                unit_index - 1
+                            ) * strip_width
                         )
-                        unit_max_lon = unit_min_lon + cell_width
-                        unit_min_lat = (
-                            request.min_lat
-                            + row_index * cell_height
+
+                        unit_max_lon = (
+                            min_lon
+                            + unit_index
+                            * strip_width
                         )
-                        unit_max_lat = unit_min_lat + cell_height
+
+                        if (
+                            unit_index
+                            == request.units_per_floor
+                        ):
+                            unit_max_lon = max_lon
 
                         unit_code = (
-                            f"{floor_number}{unit_index:02d}"
+                            f"{floor_number}"
+                            f"{unit_index:02d}"
                         )
 
                         cursor.execute(
                             """
+                            WITH candidate AS (
+                                SELECT ST_SetSRID(
+                                    ST_GeomFromGeoJSON(%s),
+                                    4326
+                                ) AS geom
+                            ),
+                            clipped AS (
+                                SELECT ST_CollectionExtract(
+                                    ST_Intersection(
+                                        ST_MakeEnvelope(
+                                            %s,
+                                            %s,
+                                            %s,
+                                            %s,
+                                            4326
+                                        ),
+                                        candidate.geom
+                                    ),
+                                    3
+                                ) AS geom
+                                FROM candidate
+                            ),
+                            pieces AS (
+                                SELECT
+                                    (ST_Dump(geom)).geom AS geom
+                                FROM clipped
+                                WHERE NOT ST_IsEmpty(geom)
+                            ),
+                            largest_piece AS (
+                                SELECT geom
+                                FROM pieces
+                                WHERE ST_Area(
+                                    geom::geography
+                                ) > 0.01
+                                ORDER BY ST_Area(
+                                    geom::geography
+                                ) DESC
+                                LIMIT 1
+                            )
                             INSERT INTO properties (
                                 property_type,
                                 parent_ulpin,
@@ -1555,7 +1746,7 @@ def create_building(request: BuildingCreateRequest):
                                 validation,
                                 footprint
                             )
-                            VALUES (
+                            SELECT
                                 'Apartment',
                                 %s,
                                 %s,
@@ -1564,27 +1755,36 @@ def create_building(request: BuildingCreateRequest):
                                 %s,
                                 %s,
                                 'Not checked',
-                                ST_MakeEnvelope(
-                                    %s, %s, %s, %s, 4326
-                                )
-                            )
+                                geom
+                            FROM largest_piece
                             RETURNING property_id, unit;
                             """,
                             (
+                                footprint_geojson,
+                                unit_min_lon,
+                                min_lat,
+                                unit_max_lon,
+                                max_lat,
                                 parent_ulpin,
                                 building_code,
                                 floor_code,
                                 unit_code,
                                 z_min,
                                 z_max,
-                                unit_min_lon,
-                                unit_min_lat,
-                                unit_max_lon,
-                                unit_max_lat,
                             ),
                         )
 
                         inserted = cursor.fetchone()
+
+                        if inserted is None:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    "Could not divide this polygon into "
+                                    "the requested number of units. "
+                                    "Try a simpler building footprint."
+                                ),
+                            )
 
                         created.append(
                             {
@@ -1606,7 +1806,16 @@ def create_building(request: BuildingCreateRequest):
             "floors": request.floors,
             "units_per_floor": request.units_per_floor,
             "floor_height": request.floor_height,
-            "generated_property_count": len(created),
+            "footprint_vertices": len(
+                request.footprint
+            ),
+            "footprint_area_m2": round(
+                footprint_area_m2,
+                2,
+            ),
+            "generated_property_count": len(
+                created
+            ),
             "properties": created,
         }
 

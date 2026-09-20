@@ -1332,3 +1332,57 @@ select {
 
   font-size: 11px;
 }
+
+
+/* =========================================================
+   BUILDING CREATOR V2 - POLYGON DRAWING
+   ========================================================= */
+
+.map-instruction {
+  min-width: 330px;
+}
+
+.map-point-count {
+  padding: 3px 8px;
+
+  border-radius: 999px;
+
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.14
+    );
+
+  font-weight: 700;
+}
+
+.map-instruction-actions {
+  margin-top: 3px;
+
+  display: flex;
+  align-items: center;
+
+  gap: 6px;
+}
+
+.map-instruction-actions button {
+  min-width: 72px;
+}
+
+.map-instruction-actions button:disabled {
+  opacity: 0.42;
+
+  cursor: not-allowed;
+}
+
+.map-instruction-actions .finish-button {
+  border-color: #f0c849;
+
+  background: #e4b737;
+
+  color: #142019;
+
+  font-weight: 800;
+}

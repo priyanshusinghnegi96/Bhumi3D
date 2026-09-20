@@ -16,6 +16,7 @@ import {
   Cartographic,
   LabelStyle,
   VerticalOrigin,
+  CallbackProperty,
 } from "cesium";
 
 import {
@@ -43,7 +44,11 @@ function CesiumViewer({
 
   footprintPickTrigger,
   footprintCancelTrigger,
+  footprintUndoTrigger,
+  footprintFinishTrigger,
+  footprintMode = "rectangle",
   onFootprintPicked,
+  onFootprintProgress,
 }) {
 
   const cesiumContainer =
@@ -122,6 +127,18 @@ function CesiumViewer({
     useRef([]);
 
 
+  const footprintPointEntitiesRef =
+    useRef([]);
+
+
+  const footprintModeRef =
+    useRef("rectangle");
+
+
+  const footprintHoverRef =
+    useRef(null);
+
+
   // ======================================================
   // CALLBACK REFERENCES
   // ======================================================
@@ -137,6 +154,10 @@ function CesiumViewer({
 
   const onFootprintPickedRef =
     useRef(onFootprintPicked);
+
+
+  const onFootprintProgressRef =
+    useRef(onFootprintProgress);
 
 
   useEffect(() => {
@@ -176,6 +197,16 @@ function CesiumViewer({
 
   }, [
     onFootprintPicked,
+  ]);
+
+
+  useEffect(() => {
+
+    onFootprintProgressRef.current =
+      onFootprintProgress;
+
+  }, [
+    onFootprintProgress,
   ]);
 
 
@@ -1053,8 +1084,228 @@ function CesiumViewer({
       [];
 
 
+    footprintPointEntitiesRef.current =
+      [];
+
+
     footprintCornersRef.current =
       [];
+
+
+    footprintHoverRef.current =
+      null;
+  }
+
+
+  function addFootprintPointEntity(
+    viewer,
+    longitude,
+    latitude
+  ) {
+
+    const pointEntity =
+      viewer.entities.add({
+        position:
+          Cartesian3.fromDegrees(
+            longitude,
+            latitude,
+            1
+          ),
+
+        point: {
+          pixelSize:
+            12,
+
+          color:
+            Color.YELLOW,
+
+          outlineColor:
+            Color.BLACK,
+
+          outlineWidth:
+            2,
+
+          disableDepthTestDistance:
+            Number.POSITIVE_INFINITY,
+        },
+      });
+
+
+    footprintTemporaryEntitiesRef
+      .current
+      .push(
+        pointEntity
+      );
+
+
+    footprintPointEntitiesRef
+      .current
+      .push(
+        pointEntity
+      );
+
+
+    return pointEntity;
+  }
+
+
+  function notifyFootprintProgress() {
+
+    onFootprintProgressRef
+      .current?.({
+        pointCount:
+          footprintCornersRef
+            .current
+            .length,
+
+        points:
+          footprintCornersRef
+            .current
+            .map(
+              (point) => ({
+                longitude:
+                  point.longitude,
+
+                latitude:
+                  point.latitude,
+              })
+            ),
+      });
+  }
+
+
+  function createPolygonDrawingPreview(
+    viewer
+  ) {
+
+    const lineEntity =
+      viewer.entities.add({
+        polyline: {
+          positions:
+            new CallbackProperty(
+              () => {
+
+                const points = [
+                  ...footprintCornersRef
+                    .current,
+                ];
+
+
+                if (
+                  footprintHoverRef.current
+                ) {
+
+                  points.push(
+                    footprintHoverRef
+                      .current
+                  );
+                }
+
+
+                if (
+                  points.length >= 3
+                ) {
+
+                  points.push(
+                    points[0]
+                  );
+                }
+
+
+                return points.map(
+                  (point) =>
+                    Cartesian3
+                      .fromDegrees(
+                        point.longitude,
+                        point.latitude,
+                        1.1
+                      )
+                );
+              },
+              false
+            ),
+
+          width:
+            3,
+
+          material:
+            Color.YELLOW,
+        },
+      });
+
+
+    const polygonEntity =
+      viewer.entities.add({
+        polygon: {
+          hierarchy:
+            new CallbackProperty(
+              () => {
+
+                const points = [
+                  ...footprintCornersRef
+                    .current,
+                ];
+
+
+                if (
+                  footprintHoverRef.current
+                ) {
+
+                  points.push(
+                    footprintHoverRef
+                      .current
+                  );
+                }
+
+
+                if (
+                  points.length < 3
+                ) {
+
+                  return undefined;
+                }
+
+
+                return (
+                  new PolygonHierarchy(
+                    points.map(
+                      (point) =>
+                        Cartesian3
+                          .fromDegrees(
+                            point.longitude,
+                            point.latitude
+                          )
+                    )
+                  )
+                );
+              },
+              false
+            ),
+
+          height:
+            0.5,
+
+          material:
+            Color.YELLOW
+              .withAlpha(
+                0.28
+              ),
+
+          outline:
+            true,
+
+          outlineColor:
+            Color.YELLOW,
+        },
+      });
+
+
+    footprintTemporaryEntitiesRef
+      .current
+      .push(
+        lineEntity,
+        polygonEntity
+      );
   }
 
 
@@ -2110,39 +2361,27 @@ function CesiumViewer({
             });
 
 
-          const pointEntity =
-            viewer.entities.add({
-              position:
-                Cartesian3.fromDegrees(
-                  longitude,
-                  latitude,
-                  1
-                ),
-
-              point: {
-                pixelSize:
-                  12,
-
-                color:
-                  Color.YELLOW,
-
-                outlineColor:
-                  Color.BLACK,
-
-                outlineWidth:
-                  2,
-
-                disableDepthTestDistance:
-                  Number.POSITIVE_INFINITY,
-              },
-            });
+          footprintHoverRef.current =
+            null;
 
 
-          footprintTemporaryEntitiesRef
-            .current
-            .push(
-              pointEntity
-            );
+          addFootprintPointEntity(
+            viewer,
+            longitude,
+            latitude
+          );
+
+
+          notifyFootprintProgress();
+
+
+          if (
+            footprintModeRef.current
+            === "polygon"
+          ) {
+
+            return;
+          }
 
 
           if (
@@ -2326,6 +2565,68 @@ function CesiumViewer({
     );
 
 
+    handler.setInputAction(
+      (movement) => {
+
+        if (
+          !footprintPickingRef.current ||
+          footprintModeRef.current
+            !== "polygon" ||
+          footprintCornersRef
+            .current
+            .length === 0
+        ) {
+
+          footprintHoverRef.current =
+            null;
+
+          return;
+        }
+
+
+        const cartesian =
+          viewer.camera
+            .pickEllipsoid(
+              movement.endPosition,
+              Ellipsoid.WGS84
+            );
+
+
+        if (!cartesian) {
+
+          footprintHoverRef.current =
+            null;
+
+          return;
+        }
+
+
+        const cartographic =
+          Cartographic
+            .fromCartesian(
+              cartesian
+            );
+
+
+        footprintHoverRef.current = {
+          longitude:
+            CesiumMath
+              .toDegrees(
+                cartographic.longitude
+              ),
+
+          latitude:
+            CesiumMath
+              .toDegrees(
+                cartographic.latitude
+              ),
+        };
+      },
+
+      ScreenSpaceEventType.MOUSE_MOVE
+    );
+
+
     return () => {
 
       cancelled =
@@ -2380,8 +2681,29 @@ function CesiumViewer({
       true;
 
 
+    footprintModeRef.current =
+      footprintMode;
+
+
     footprintCornersRef.current =
       [];
+
+
+    footprintHoverRef.current =
+      null;
+
+
+    if (
+      footprintMode === "polygon"
+    ) {
+
+      createPolygonDrawingPreview(
+        viewerRef.current
+      );
+    }
+
+
+    notifyFootprintProgress();
 
 
     viewerRef.current
@@ -2393,6 +2715,145 @@ function CesiumViewer({
 
   }, [
     footprintPickTrigger,
+    footprintMode,
+  ]);
+
+
+  // ======================================================
+  // UNDO POLYGON FOOTPRINT POINT
+  // ======================================================
+
+  useEffect(() => {
+
+    if (
+      footprintUndoTrigger === 0 ||
+      !viewerRef.current ||
+      !footprintPickingRef.current ||
+      footprintModeRef.current
+        !== "polygon"
+    ) {
+
+      return;
+    }
+
+
+    if (
+      footprintCornersRef
+        .current
+        .length === 0
+    ) {
+
+      return;
+    }
+
+
+    footprintCornersRef
+      .current
+      .pop();
+
+
+    footprintHoverRef.current =
+      null;
+
+
+    const pointEntity =
+      footprintPointEntitiesRef
+        .current
+        .pop();
+
+
+    if (pointEntity) {
+
+      viewerRef.current
+        .entities
+        .remove(
+          pointEntity
+        );
+
+
+      footprintTemporaryEntitiesRef
+        .current =
+          footprintTemporaryEntitiesRef
+            .current
+            .filter(
+              (entity) =>
+                entity !== pointEntity
+            );
+    }
+
+
+    notifyFootprintProgress();
+
+  }, [
+    footprintUndoTrigger,
+  ]);
+
+
+  // ======================================================
+  // FINISH POLYGON FOOTPRINT
+  // ======================================================
+
+  useEffect(() => {
+
+    if (
+      footprintFinishTrigger === 0 ||
+      !viewerRef.current ||
+      !footprintPickingRef.current ||
+      footprintModeRef.current
+        !== "polygon"
+    ) {
+
+      return;
+    }
+
+
+    if (
+      footprintCornersRef
+        .current
+        .length < 3
+    ) {
+
+      return;
+    }
+
+
+    const coordinates =
+      footprintCornersRef
+        .current
+        .map(
+          (point) => ({
+            longitude:
+              point.longitude,
+
+            latitude:
+              point.latitude,
+          })
+        );
+
+
+    footprintHoverRef.current =
+      null;
+
+
+    footprintPickingRef.current =
+      false;
+
+
+    viewerRef.current
+      .scene
+      .canvas
+      .style
+      .cursor =
+        "default";
+
+
+    onFootprintPickedRef
+      .current?.({
+        coordinates,
+      });
+
+  }, [
+    footprintFinishTrigger,
   ]);
 
 
