@@ -140,6 +140,7 @@ function App() {
     lights: true,
     markings: true,
     signals: true,
+    mobility: true,
     apartments: true,
     parking: true,
     utilities: true,
@@ -170,7 +171,7 @@ function App() {
     setViewMode("city");
     setLayers((previous) => ({
       ...previous, parcels: false, buildings: true, roads: true, amenities: true,
-      landscape: true, lights: true, markings: true, signals: true,
+      landscape: true, lights: true, markings: true, signals: true, mobility: true,
       apartments: false, parking: true, utilities: true,
     }));
   }
@@ -179,7 +180,7 @@ function App() {
     setViewMode("cadastral");
     setLayers((previous) => ({
       ...previous, parcels: true, buildings: true, roads: true, amenities: false,
-      landscape: false, lights: false, markings: false, signals: false,
+      landscape: false, lights: false, markings: false, signals: false, mobility: false,
       apartments: true, parking: true, utilities: true,
     }));
   }
@@ -524,7 +525,7 @@ function App() {
 
   async function handleGenerateDemoColony() {
     const confirmed = window.confirm(
-      "Generate Bhumi3D Township V3 Step 3.3 architecture and streetscape realism upgrade?\n\n" +
+      "Generate Bhumi3D Township V3 Step 3.5 mobility + public realm upgrade?\n\n" +
         "This replaces the current demo parcels, buildings and 3D properties. " +
         "Your code is not changed."
     );
@@ -532,7 +533,7 @@ function App() {
     if (!confirmed) return;
 
     setIsGeneratingColony(true);
-    setColonyMessage("Generating Township V3 Step 3.3 architecture + streetscape upgrade...");
+    setColonyMessage("Generating Township V3 Step 3.5 mobility + public realm upgrade...");
 
     try {
       const result = await generateDemoColony();
@@ -548,7 +549,8 @@ function App() {
           `${result.apartment_building_count} apartment towers, ` +
           `${result.residential_building_count} homes, ` +
           `${result.hospital_count} hospitals, ${result.road_count} roads, ` +
-          `${result.tree_count} landscape trees, ${result.park_bench_count || 0} park benches, ` +
+          `${result.tree_count} landscape trees, ${result.vehicle_count || 0} vehicles, ` +
+          `${result.bus_shelter_count || 0} bus shelters, ${result.ev_charger_count || 0} EV chargers, ` +
           `perimeter green belts and the ${result.entrance_name} entrance.`
       );
 
@@ -947,6 +949,7 @@ function App() {
               ["landscape", "Trees / Landscape / Entrance"],
               ["markings", "Road Markings / Crossings"],
               ["signals", "Traffic Signals"],
+              ["mobility", "Vehicles / Transit / EV"],
               ["lights", "Modern Street Lights"],
               ["apartments", "Apartments"],
               ["parking", "Basement Parking"],

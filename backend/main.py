@@ -49,7 +49,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="1.3.4",
+    version="1.3.5",
 )
 
 
@@ -182,7 +182,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "1.3.4",
+        "version": "1.3.5",
     }
 
 
@@ -1438,11 +1438,12 @@ def generate_demo_colony():
 
     """
     Replace the small development demo with the deterministic
-    Bhumi3D Township V3 Step 3.4 dataset.
+    Bhumi3D Township V3 Step 3.5 dataset.
 
-    Step 3.4 keeps the 150-plot cadastral foundation and adds stronger
-    civic architecture / facade realism while preserving the Step 2.1
-    road/camera work and the Step 3.2 City/Cadastral presentation modes:
+    Step 3.5 keeps the Step 3.4 architecture and 150-plot cadastral
+    foundation, then adds mobility and public-realm realism while
+    preserving the Step 2.1 road/camera work and the Step 3.2
+    City/Cadastral presentation modes:
     - 150 cadastral plots
     - 50 apartment-tower plots and tower footprints
     - 80 residential plots with low-rise homes
@@ -1472,6 +1473,11 @@ def generate_demo_colony():
     - hospital emergency canopies, ambulance bays and red-cross identity
     - school sports courts and entrance structures
     - shopping arcade frontage and gym entrance identity
+    - populated common parking areas and civic drop-off traffic
+    - light traffic on the two principal township corridors
+    - CadastraX3D township shuttle buses and four bus shelters
+    - EV charging pedestals in common parking areas
+    - close-range district / destination wayfinding signs
 
     Individual apartment ownership volumes remain intentionally
     deferred so the township overview stays lightweight.
@@ -2219,7 +2225,7 @@ def generate_demo_colony():
                         "facade_family": facade_family,
                         "roof_style": roof_style,
                         "podium_floors": podium_floors,
-                        "demo": "bhumi3d_township_v3_step3_4",
+                        "demo": "bhumi3d_township_v3_step3_5",
                     }
 
                     cursor.execute(
@@ -2242,7 +2248,7 @@ def generate_demo_colony():
                         (
                             building_type,
                             feature_name,
-                            "bhumi3d_township_v3_step3_4",
+                            "bhumi3d_township_v3_step3_5",
                             json.dumps(metadata),
                             polygon_wkt(footprint),
                         ),
@@ -2360,6 +2366,10 @@ def generate_demo_colony():
                 ground_asset_count = 0
                 green_belt_count = 0
                 entrance_detail_count = 0
+                vehicle_count = 0
+                bus_shelter_count = 0
+                wayfinding_sign_count = 0
+                ev_charger_count = 0
 
                 def insert_tree(longitude, latitude, context, scale=1.0):
                     nonlocal tree_count
@@ -2389,6 +2399,61 @@ def generate_demo_colony():
                         "park_path",
                         name,
                         {"width_m": width_m, "surface": "paver"},
+                        "ST_GeomFromText(%s, 4326)",
+                        (wkt,),
+                    )
+
+                def insert_vehicle(
+                    name,
+                    center_lon,
+                    center_lat,
+                    heading_deg=0.0,
+                    length_m=4.4,
+                    width_m=1.9,
+                    height_m=1.45,
+                    color="#d6d6d6",
+                    vehicle_kind="car",
+                    context="Township mobility",
+                ):
+                    nonlocal vehicle_count
+                    vehicle_count += 1
+
+                    metres_per_lon_degree = 97300.0
+                    metres_per_lat_degree = 111000.0
+                    angle = math.radians(heading_deg)
+                    half_length = length_m / 2.0
+                    half_width = width_m / 2.0
+
+                    corners = []
+                    for local_x, local_y in [
+                        (-half_length, -half_width),
+                        (half_length, -half_width),
+                        (half_length, half_width),
+                        (-half_length, half_width),
+                    ]:
+                        east_m = local_x * math.cos(angle) - local_y * math.sin(angle)
+                        north_m = local_x * math.sin(angle) + local_y * math.cos(angle)
+                        corners.append((
+                            center_lon + east_m / metres_per_lon_degree,
+                            center_lat + north_m / metres_per_lat_degree,
+                        ))
+
+                    corners.append(corners[0])
+                    wkt = "POLYGON((" + ", ".join(
+                        f"{lon:.8f} {lat:.8f}" for lon, lat in corners
+                    ) + "))"
+
+                    _insert_colony_asset(
+                        cursor,
+                        "vehicle",
+                        name,
+                        {
+                            "vehicle_kind": vehicle_kind,
+                            "color": color,
+                            "height_m": height_m,
+                            "heading_deg": heading_deg,
+                            "context": context,
+                        },
                         "ST_GeomFromText(%s, 4326)",
                         (wkt,),
                     )
@@ -3828,10 +3893,225 @@ def generate_demo_colony():
                         "east",
                     )
 
+                # -----------------------------------------
+                # STEP 3.5 MOBILITY + PUBLIC REALM REALISM
+                # -----------------------------------------
+
+                vehicle_palette = [
+                    "#d9dde2", "#3f5c77", "#8f3e3e",
+                    "#d4b04d", "#40484f", "#6c8f76",
+                ]
+
+                # Parked vehicles + EV charging in both common parking areas.
+                for plot in plots:
+                    if plot["land_use"] != "parking":
+                        continue
+
+                    for row_fraction in (0.30, 0.70):
+                        for column_number, column_fraction in enumerate(
+                            (0.14, 0.34, 0.54, 0.74),
+                            start=1,
+                        ):
+                            insert_vehicle(
+                                f"{plot['name']} Parked Car {vehicle_count + 1:03d}",
+                                plot["min_lon"] + plot_width * column_fraction,
+                                plot["min_lat"] + plot_height * row_fraction,
+                                heading_deg=90,
+                                color=vehicle_palette[(vehicle_count + column_number) % len(vehicle_palette)],
+                                context=plot["name"],
+                            )
+
+                    for charger_fraction in (0.86, 0.93):
+                        ev_charger_count += 1
+                        _insert_colony_asset(
+                            cursor,
+                            "ev_charger",
+                            f"EV Charger EV{ev_charger_count:02d}",
+                            {
+                                "parent_ulpin": plot["ulpin"],
+                                "power_kw": 22,
+                                "text": "EV",
+                            },
+                            "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                            (
+                                plot["min_lon"] + plot_width * charger_fraction,
+                                plot["min_lat"] + plot_height * 0.18,
+                            ),
+                        )
+
+                # Civic destinations get a small amount of recognisable traffic.
+                for plot in plots:
+                    if plot["land_use"] == "hospital":
+                        for ambulance_index in range(2):
+                            insert_vehicle(
+                                f"{plot['name']} Ambulance {ambulance_index + 1}",
+                                plot["min_lon"] + 0.000080 + ambulance_index * 0.000060,
+                                plot["min_lat"] + 0.000037,
+                                heading_deg=0,
+                                length_m=5.4,
+                                width_m=2.1,
+                                height_m=2.45,
+                                color="#f3f3ef",
+                                vehicle_kind="ambulance",
+                                context=plot["name"],
+                            )
+
+                    elif plot["land_use"] == "shopping":
+                        for index, fraction in enumerate((0.18, 0.34, 0.50, 0.66, 0.82)):
+                            insert_vehicle(
+                                f"Market Square Visitor Car {index + 1}",
+                                plot["min_lon"] + plot_width * fraction,
+                                plot["min_lat"] + 0.000050,
+                                heading_deg=90,
+                                color=vehicle_palette[(vehicle_count + index) % len(vehicle_palette)],
+                                context="Market Square",
+                            )
+
+                    elif plot["land_use"] == "school":
+                        insert_vehicle(
+                            f"{plot['name']} School Shuttle",
+                            plot["min_lon"] + plot_width * 0.50,
+                            plot["min_lat"] + 0.000045,
+                            heading_deg=0,
+                            length_m=8.8,
+                            width_m=2.45,
+                            height_m=3.05,
+                            color="#d8b43b",
+                            vehicle_kind="school_bus",
+                            context=plot["name"],
+                        )
+
+                # Light road traffic on the two principal axes.
+                for column_index in (1, 4, 8, 11, 13):
+                    longitude = x_starts[column_index] + plot_width / 2
+                    insert_vehicle(
+                        f"Central Avenue Eastbound Car {column_index:02d}",
+                        longitude,
+                        main_avenue_center_lat - 0.000028,
+                        heading_deg=0,
+                        color=vehicle_palette[column_index % len(vehicle_palette)],
+                        context="Township Central Avenue",
+                    )
+                    insert_vehicle(
+                        f"Central Avenue Westbound Car {column_index:02d}",
+                        longitude,
+                        main_avenue_center_lat + 0.000028,
+                        heading_deg=180,
+                        color=vehicle_palette[(column_index + 2) % len(vehicle_palette)],
+                        context="Township Central Avenue",
+                    )
+
+                for row_index in (1, 3, 5, 7, 8):
+                    latitude = y_starts[row_index] + plot_height / 2
+                    insert_vehicle(
+                        f"Central Boulevard Northbound Car {row_index:02d}",
+                        central_boulevard_center_lon - 0.000030,
+                        latitude,
+                        heading_deg=90,
+                        color=vehicle_palette[(row_index + 1) % len(vehicle_palette)],
+                        context="North-South Central Boulevard",
+                    )
+                    insert_vehicle(
+                        f"Central Boulevard Southbound Car {row_index:02d}",
+                        central_boulevard_center_lon + 0.000030,
+                        latitude,
+                        heading_deg=270,
+                        color=vehicle_palette[(row_index + 4) % len(vehicle_palette)],
+                        context="North-South Central Boulevard",
+                    )
+
+                insert_vehicle(
+                    "CadastraX3D Township Shuttle East",
+                    x_starts[2] + plot_width / 2,
+                    main_avenue_center_lat - 0.000052,
+                    heading_deg=0,
+                    length_m=10.5,
+                    width_m=2.55,
+                    height_m=3.25,
+                    color="#d4aa37",
+                    vehicle_kind="township_bus",
+                    context="Township Central Avenue",
+                )
+                insert_vehicle(
+                    "CadastraX3D Township Shuttle North",
+                    central_boulevard_center_lon + 0.000052,
+                    y_starts[7] + plot_height / 2,
+                    heading_deg=90,
+                    length_m=10.5,
+                    width_m=2.55,
+                    height_m=3.25,
+                    color="#d4aa37",
+                    vehicle_kind="township_bus",
+                    context="North-South Central Boulevard",
+                )
+
+                # Four compact shelters along the main transit corridors.
+                bus_shelters = [
+                    ("Central Avenue West Bus Shelter", x_starts[2] + plot_width / 2, main_avenue_center_lat + 0.000094, "east_west"),
+                    ("Central Avenue East Bus Shelter", x_starts[12] + plot_width / 2, main_avenue_center_lat - 0.000094, "east_west"),
+                    ("Central Boulevard North Bus Shelter", central_boulevard_center_lon + 0.000102, y_starts[7] + plot_height / 2, "north_south"),
+                    ("Central Boulevard South Bus Shelter", central_boulevard_center_lon - 0.000102, y_starts[2] + plot_height / 2, "north_south"),
+                ]
+
+                for shelter_name, shelter_lon, shelter_lat, orientation in bus_shelters:
+                    bus_shelter_count += 1
+                    if orientation == "east_west":
+                        half_lon = 4.0 / 97300.0
+                        half_lat = 1.5 / 111000.0
+                    else:
+                        half_lon = 1.5 / 97300.0
+                        half_lat = 4.0 / 111000.0
+
+                    _insert_colony_asset(
+                        cursor,
+                        "bus_shelter",
+                        shelter_name,
+                        {
+                            "orientation": orientation,
+                            "height_m": 2.8,
+                            "text": "BUS STOP",
+                        },
+                        "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                        (
+                            shelter_lon - half_lon,
+                            shelter_lat - half_lat,
+                            shelter_lon + half_lon,
+                            shelter_lat + half_lat,
+                        ),
+                    )
+                    _insert_colony_asset(
+                        cursor,
+                        "bus_stop_sign",
+                        f"{shelter_name} Sign",
+                        {"text": "BUS", "height_m": 2.6},
+                        "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                        (shelter_lon, shelter_lat),
+                    )
+
+                wayfinding_specs = [
+                    ("Central Avenue Sign", township_center_lon - 0.00016, main_avenue_center_lat + 0.000075, "CENTRAL AVENUE"),
+                    ("North District Sign", central_boulevard_center_lon + 0.000080, y_starts[8] + plot_height * 0.55, "NORTH DISTRICT"),
+                    ("South District Sign", central_boulevard_center_lon - 0.000080, y_starts[1] + plot_height * 0.45, "SOUTH DISTRICT"),
+                    ("Hospital Direction Sign", x_starts[12] + plot_width * 0.75, y_starts[1] + plot_height * 0.50, "HOSPITAL →"),
+                    ("Market Direction Sign", x_starts[8] + plot_width * 0.45, y_starts[4] + plot_height * 0.18, "MARKET SQUARE →"),
+                    ("School Direction Sign", x_starts[1] + plot_width * 0.20, y_starts[0] + plot_height * 0.75, "SCHOOL ←"),
+                ]
+
+                for sign_name, longitude, latitude, sign_text in wayfinding_specs:
+                    wayfinding_sign_count += 1
+                    _insert_colony_asset(
+                        cursor,
+                        "wayfinding_sign",
+                        sign_name,
+                        {"text": sign_text, "height_m": 3.1},
+                        "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                        (longitude, latitude),
+                    )
+
         return {
             "success": True,
-            "message": "Bhumi3D Township V3 Step 3.4 generated successfully",
-            "version": "township_v3_step3_4",
+            "message": "Bhumi3D Township V3 Step 3.5 generated successfully",
+            "version": "township_v3_step3_5",
             "plot_count": 150,
             "apartment_plot_count": 50,
             "residential_plot_count": 80,
@@ -3865,6 +4145,10 @@ def generate_demo_colony():
             "ground_asset_count": ground_asset_count,
             "green_belt_count": green_belt_count,
             "entrance_detail_count": entrance_detail_count,
+            "vehicle_count": vehicle_count,
+            "bus_shelter_count": bus_shelter_count,
+            "wayfinding_sign_count": wayfinding_sign_count,
+            "ev_charger_count": ev_charger_count,
             "entrance_name": "CadastraX3D Township",
             "apartment_floor_total": sum(apartment_floors),
             "highest_apartment_floors": max(apartment_floors),
@@ -3872,9 +4156,9 @@ def generate_demo_colony():
                 sum(apartment_floors) * 4
             ),
             "note": (
-                "Step 3.4 adds distinct civic campuses, stronger apartment and villa facade families, "
-                "recognisable hospital/school/retail/gym frontage, upgraded tower and house entrances, "
-                "and a more monumental CADASTRAX3D TOWNSHIP gateway while preserving City/Cadastral modes."
+                "Step 3.5 adds populated parking areas, principal-road traffic, township shuttle buses, "
+                "bus shelters, EV charging points and close-range wayfinding while preserving the Step 3.4 "
+                "architecture and City/Cadastral presentation modes."
             ),
         }
 

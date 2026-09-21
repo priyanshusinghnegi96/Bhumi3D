@@ -86,6 +86,7 @@ function CesiumViewer({
       lights: [],
       markings: [],
       signals: [],
+      mobility: [],
       apartments: [],
       parking: [],
       utilities: [],
@@ -1584,6 +1585,7 @@ function CesiumViewer({
             markings: [],
             signals: [],
             landscape: [],
+            mobility: [],
             apartments: [],
             parking: [],
             utilities: [],
@@ -2241,6 +2243,192 @@ function CesiumViewer({
               },
             });
             layerEntitiesRef.current.amenities.push(bay);
+            continue;
+          }
+
+          if (
+            assetType === "vehicle" &&
+            asset.geometry.type === "Polygon"
+          ) {
+            const positions = geometryToPositions(asset.geometry);
+            if (positions.length < 3) continue;
+
+            const vehicleKind = asset.properties?.vehicle_kind || "car";
+            const vehicleHeight = Number(asset.properties?.height_m || 1.45);
+            const vehicleColor =
+              Color.fromCssColorString(asset.properties?.color || "#d7dbe0") ||
+              Color.LIGHTGRAY;
+            const detailDistance = new DistanceDisplayCondition(0, 900);
+
+            const vehicle = viewer.entities.add({
+              id: `vehicle-${asset.id}`,
+              name: asset.name,
+              show: layers.mobility,
+              polygon: {
+                hierarchy: new PolygonHierarchy(positions),
+                height: 0.10,
+                extrudedHeight: vehicleHeight,
+                material: vehicleColor.withAlpha(0.98),
+                outline: true,
+                outlineColor: Color.fromCssColorString("#2a2e31").withAlpha(0.80),
+                distanceDisplayCondition: detailDistance,
+              },
+              properties: {
+                type: vehicleKind === "ambulance"
+                  ? "Emergency Vehicle"
+                  : vehicleKind.includes("bus")
+                    ? "Transit Vehicle"
+                    : "Township Vehicle",
+                parentUlpIn: asset.properties?.context || "Township Mobility",
+                propertyId: `ASSET-${asset.id}`,
+                building: "—",
+                floor: "Road / Parking",
+                unit: "—",
+                verticalRange: `0m – ${vehicleHeight}m`,
+                validation: "Step 3.5 mobility asset",
+              },
+            });
+
+            layerEntitiesRef.current.mobility.push(vehicle);
+            continue;
+          }
+
+          if (
+            assetType === "bus_shelter" &&
+            asset.geometry.type === "Polygon"
+          ) {
+            const positions = geometryToPositions(asset.geometry);
+            if (positions.length < 3) continue;
+
+            const height = Number(asset.properties?.height_m || 2.8);
+            const shelterParts = [];
+
+            shelterParts.push(viewer.entities.add({
+              id: `bus-shelter-${asset.id}`,
+              name: asset.name,
+              show: layers.mobility,
+              polygon: {
+                hierarchy: new PolygonHierarchy(positions),
+                height: 0.12,
+                extrudedHeight: height,
+                material: Color.fromCssColorString("#6f8f96").withAlpha(0.30),
+                outline: true,
+                outlineColor: Color.fromCssColorString("#28383c").withAlpha(0.92),
+                distanceDisplayCondition: new DistanceDisplayCondition(0, 760),
+              },
+              properties: {
+                type: "Bus Shelter",
+                parentUlpIn: "Township Public Transit",
+                propertyId: `ASSET-${asset.id}`,
+                building: "—",
+                floor: "Surface",
+                unit: "—",
+                verticalRange: `0m – ${height}m`,
+                validation: "Step 3.5 public-transit shelter",
+              },
+            }));
+
+            // A dark roof slab gives the shelter a readable silhouette.
+            shelterParts.push(viewer.entities.add({
+              show: layers.mobility,
+              polygon: {
+                hierarchy: new PolygonHierarchy(positions),
+                height: height - 0.18,
+                extrudedHeight: height + 0.08,
+                material: Color.fromCssColorString("#2f3b3e").withAlpha(0.96),
+                distanceDisplayCondition: new DistanceDisplayCondition(0, 760),
+              },
+            }));
+
+            layerEntitiesRef.current.mobility.push(...shelterParts);
+            continue;
+          }
+
+          if (
+            ["bus_stop_sign", "wayfinding_sign", "ev_charger"].includes(assetType) &&
+            asset.geometry.type === "Point"
+          ) {
+            const [longitude, latitude] = asset.geometry.coordinates;
+            const isEv = assetType === "ev_charger";
+            const isBus = assetType === "bus_stop_sign";
+            const height = Number(asset.properties?.height_m || (isEv ? 1.45 : 3.0));
+            const text = String(
+              asset.properties?.text ||
+              (isEv ? "EV" : isBus ? "BUS STOP" : asset.name)
+            );
+            const parts = [];
+
+            if (isEv) {
+              parts.push(viewer.entities.add({
+                id: `ev-charger-${asset.id}`,
+                name: asset.name,
+                position: Cartesian3.fromDegrees(longitude, latitude, height / 2),
+                show: layers.mobility,
+                box: {
+                  dimensions: new Cartesian3(0.62, 0.46, height),
+                  material: Color.fromCssColorString("#2f7657").withAlpha(0.98),
+                  outline: true,
+                  outlineColor: Color.fromCssColorString("#dbe9e2").withAlpha(0.90),
+                  distanceDisplayCondition: new DistanceDisplayCondition(0, 520),
+                },
+                properties: {
+                  type: "EV Charging Point",
+                  parentUlpIn: "Township Common Parking",
+                  propertyId: `ASSET-${asset.id}`,
+                  building: "—",
+                  floor: "Surface",
+                  unit: "—",
+                  verticalRange: `0m – ${height}m`,
+                  validation: "Step 3.5 EV mobility infrastructure",
+                },
+              }));
+            } else {
+              parts.push(viewer.entities.add({
+                id: `${assetType}-${asset.id}`,
+                name: asset.name,
+                position: Cartesian3.fromDegrees(longitude, latitude, height / 2),
+                show: layers.mobility,
+                cylinder: {
+                  length: height,
+                  topRadius: 0.07,
+                  bottomRadius: 0.09,
+                  material: Color.fromCssColorString("#384247"),
+                  distanceDisplayCondition: new DistanceDisplayCondition(0, 620),
+                },
+                properties: {
+                  type: isBus ? "Bus Stop Sign" : "Township Wayfinding",
+                  parentUlpIn: "Township Public Realm",
+                  propertyId: `ASSET-${asset.id}`,
+                  building: "—",
+                  floor: "Surface",
+                  unit: "—",
+                  verticalRange: `0m – ${height}m`,
+                  validation: "Step 3.5 public-realm signage",
+                },
+              }));
+            }
+
+            parts.push(viewer.entities.add({
+              position: Cartesian3.fromDegrees(longitude, latitude, height + 0.45),
+              show: layers.mobility,
+              label: {
+                text,
+                font: isEv ? "bold 12px sans-serif" : "bold 13px sans-serif",
+                style: LabelStyle.FILL_AND_OUTLINE,
+                fillColor: isEv
+                  ? Color.fromCssColorString("#d9f4e5")
+                  : (isBus
+                    ? Color.fromCssColorString("#f3d05f")
+                    : Color.WHITE),
+                outlineColor: Color.fromCssColorString("#1b2527"),
+                outlineWidth: 4,
+                verticalOrigin: VerticalOrigin.CENTER,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                distanceDisplayCondition: new DistanceDisplayCondition(0, isEv ? 420 : 560),
+              },
+            }));
+
+            layerEntitiesRef.current.mobility.push(...parts);
             continue;
           }
 
@@ -4833,6 +5021,16 @@ function CesiumViewer({
 
       entity.show =
         layers.signals;
+    }
+
+
+    for (
+      const entity
+      of groups.mobility || []
+    ) {
+
+      entity.show =
+        layers.mobility;
     }
 
 
