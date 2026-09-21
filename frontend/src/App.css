@@ -1502,3 +1502,807 @@ select {
 .view-mode-row { display:flex; gap:7px; margin-bottom:7px; }
 .view-mode-button { min-width:98px; border:1px solid rgba(255,255,255,.28)!important; background:rgba(255,255,255,.08)!important; color:#eef7f2!important; }
 .view-mode-button.active { background:#e4b737!important; color:#17221d!important; border-color:#e4b737!important; box-shadow:0 0 0 2px rgba(228,183,55,.16); }
+
+/* =========================================================
+   STEP 3.6A — UNIFIED CADASTRAL SEARCH + BLOCK ADDRESSING
+   ========================================================= */
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.section-title-row h3 {
+  margin-bottom: 8px;
+}
+
+.search-scope-badge {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #e6f0eb;
+  color: #1c5a40;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.search-help {
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #738078;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.search-help b {
+  color: #214f3b;
+}
+
+.unified-results {
+  max-height: 330px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.unified-search-card {
+  border-left: 3px solid #236346;
+}
+
+.search-result-description {
+  margin-top: 5px;
+  color: #46584f;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.result-type {
+  flex: 0 0 auto;
+  letter-spacing: 0.35px;
+}
+
+.result-block { background: #e8e1f4 !important; color: #624186 !important; }
+.result-plot { background: #dfeee6 !important; color: #1d5c40 !important; }
+.result-building { background: #efe2f1 !important; color: #762483 !important; }
+.result-floor { background: #e4edf8 !important; color: #315f91 !important; }
+.result-unit { background: #fff0cb !important; color: #7f5b0d !important; }
+
+.block-hierarchy {
+  gap: 7px;
+}
+
+.hierarchy-block {
+  border: 1px solid #d8e1dc;
+  border-radius: 7px;
+  background: #f8faf9;
+  overflow: hidden;
+}
+
+.hierarchy-block > summary {
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  list-style: none;
+  background: #eef5f1;
+}
+
+.hierarchy-block > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hierarchy-block > summary strong {
+  color: #164e37;
+  font-size: 11px;
+}
+
+.hierarchy-block > summary span {
+  color: #748179;
+  font-size: 8px;
+}
+
+.hierarchy-block-content {
+  padding: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.hierarchy-block .hierarchy-plot {
+  background: white;
+}
+
+.block-badge {
+  background: #ece4f6;
+  color: #64408c;
+}
+
+.panel-subtitle {
+  margin-top: -9px;
+  margin-bottom: 13px;
+  color: #68766f;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.unit-directory {
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.floor-directory-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #e4eae7;
+}
+
+.floor-directory-row:last-child {
+  border-bottom: none;
+}
+
+.floor-directory-row > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #315947;
+  font-size: 10px;
+}
+
+.unit-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.unit-chip {
+  padding: 4px 7px;
+  border: 1px solid #c9d8d0;
+  border-radius: 5px;
+  background: white;
+  color: #1f513a;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.unit-chip:hover {
+  border-color: #176544;
+  background: #eaf4ef;
+}
+
+/* =========================================================
+   STEP 3.6B — INTERACTIVE INSPECTION + REALISTIC SCENE
+   ========================================================= */
+
+.map-area,
+.cesium-container {
+  background:
+    linear-gradient(
+      180deg,
+      #789eb0 0%,
+      #a9c2c4 38%,
+      #c8d1c4 62%,
+      #78836b 100%
+    );
+}
+
+.cesium-container .cesium-viewer,
+.cesium-container .cesium-widget,
+.cesium-container canvas {
+  background: transparent !important;
+}
+
+.inspection-tip {
+  margin: 12px 0;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid #bfd5c9;
+  border-radius: 7px;
+  background: #edf6f1;
+  color: #315947;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.inspection-tip strong {
+  color: #164e37;
+  font-size: 10px;
+}
+
+.floor-focus-button {
+  margin: 0 0 6px 0;
+  padding: 4px 7px;
+  border: 1px solid #c4d5cc;
+  border-radius: 5px;
+  background: #f5faf7;
+  color: #315947;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.floor-focus-button:hover,
+.floor-focus-button:focus-visible {
+  border-color: #176544;
+  background: #e2f1e9;
+  outline: none;
+}
+
+/* Search stays compact even when an ambiguous unit query returns many towers. */
+.unified-results {
+  scrollbar-gutter: stable;
+}
+
+.unified-search-card:focus-visible,
+.unit-chip:focus-visible {
+  outline: 2px solid #d7a91f;
+  outline-offset: 1px;
+}
+
+/* =========================================================
+   STEP 3.7A — HACKATHON FINAL CORE CADASTRE POLISH
+   ========================================================= */
+
+/* The Cesium globe now supplies the earth horizon. This gradient remains as
+   a soft atmospheric fallback around the WebGL canvas. */
+.map-area,
+.cesium-container {
+  background:
+    radial-gradient(circle at 50% 22%, rgba(229, 239, 242, 0.92) 0%, rgba(178, 204, 211, 0.90) 34%, rgba(121, 151, 159, 0.82) 58%, rgba(95, 113, 92, 0.94) 100%);
+}
+
+.ulpin-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 11px 12px;
+  border: 1px solid #b8d7c5;
+  border-left: 4px solid #168252;
+  border-radius: 8px;
+  background: #eef8f2;
+  color: #17392c;
+  line-height: 1.4;
+}
+
+.ulpin-notice strong {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.ulpin-notice span {
+  font-size: 11px;
+  color: #476259;
+}
+
+/* Keep the judge-facing cadastral identifiers readable even when long. */
+.info-value {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* =========================================================
+   STEP 3.7B — SELECTION + SEARCH + UI CLARITY
+   ========================================================= */
+
+:root {
+  --sel-block: #06b6d4;
+  --sel-plot: #22c55e;
+  --sel-building: #2563eb;
+  --sel-floor: #f59e0b;
+  --sel-apartment: #d946ef;
+}
+
+/* More natural fallback horizon. Cesium's globe remains the real ground
+   context; this prevents the canvas edges from reading as a blue void. */
+.map-area,
+.cesium-container {
+  background:
+    linear-gradient(
+      180deg,
+      #a8bec8 0%,
+      #c7d2ca 38%,
+      #9da995 62%,
+      #6f7d66 100%
+    );
+}
+
+/* The camera/view menu is now a slim top-centre toolbar instead of a large
+   floating panel obscuring the township. */
+.camera-controls {
+  top: 70px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: calc(100% - 32px);
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 9px;
+  background: rgba(10, 49, 35, 0.91);
+}
+
+.view-mode-row {
+  margin: 0;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.camera-controls-row {
+  flex-wrap: nowrap;
+  justify-content: center;
+}
+
+.camera-controls button {
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.camera-help {
+  display: none;
+}
+
+/* Search cards use the same visual language as the 3D selection state. */
+.result-block { background: #cffafe !important; color: #0e7490 !important; }
+.result-plot { background: #dcfce7 !important; color: #15803d !important; }
+.result-building { background: #dbeafe !important; color: #1d4ed8 !important; }
+.result-floor { background: #ffedd5 !important; color: #c2410c !important; }
+.result-unit { background: #fae8ff !important; color: #a21caf !important; }
+
+.unified-search-card:has(.result-block) { border-left-color: var(--sel-block); }
+.unified-search-card:has(.result-plot) { border-left-color: var(--sel-plot); }
+.unified-search-card:has(.result-building) { border-left-color: var(--sel-building); }
+.unified-search-card:has(.result-floor) { border-left-color: var(--sel-floor); }
+.unified-search-card:has(.result-unit) { border-left-color: var(--sel-apartment); }
+
+/* Right-panel badges mirror the actual 3D selection colors. */
+.block-badge {
+  background: #cffafe;
+  color: #0e7490;
+}
+
+.plot-badge {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.building-badge {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.floor-badge {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.apartment-badge {
+  background: #fae8ff;
+  color: #a21caf;
+}
+
+.panel-navigation {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5e9e7;
+}
+
+.cadastral-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.breadcrumb-chip {
+  padding: 4px 7px;
+  border: 1px solid #cbd7d1;
+  border-radius: 999px;
+  background: #f5f8f6;
+  color: #315947;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.breadcrumb-chip:hover:not(:disabled) {
+  border-color: #176544;
+  background: #eaf4ef;
+}
+
+.breadcrumb-chip.current,
+.breadcrumb-chip:disabled {
+  background: #123f2f;
+  border-color: #123f2f;
+  color: #fff;
+  cursor: default;
+  opacity: 1;
+}
+
+.up-level-button {
+  margin-top: 8px;
+  padding: 5px 8px;
+  border: 1px solid #cbd7d1;
+  border-radius: 5px;
+  background: #fff;
+  color: #315947;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.up-level-button:hover {
+  background: #edf6f1;
+  border-color: #176544;
+}
+
+.relationship-link {
+  width: 100%;
+  padding: 7px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 0;
+  border-bottom: 1px solid #e6ebe8;
+  background: transparent;
+  color: #315947;
+  text-align: left;
+  cursor: pointer;
+}
+
+.relationship-link:hover {
+  color: #174e37;
+  background: #edf6f1;
+}
+
+.relationship-link span {
+  color: #76827c;
+  font-size: 9px;
+}
+
+.floor-directory {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.floor-button-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.floor-button-grid .floor-focus-button {
+  margin: 0;
+  min-width: 0;
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+
+.floor-button-grid .floor-focus-button:hover {
+  background: #ffedd5;
+  border-color: var(--sel-floor);
+}
+
+.unit-chip-row.large {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.unit-chip-row.large .unit-chip {
+  padding: 8px 7px;
+  border-color: #e9d5ff;
+  background: #fdf4ff;
+  color: #86198f;
+  text-align: center;
+}
+
+.unit-chip-row.large .unit-chip:hover {
+  border-color: var(--sel-apartment);
+  background: #fae8ff;
+}
+
+.switch-floor-row {
+  margin-top: 12px;
+  padding-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #e5e9e7;
+  color: #65716b;
+  font-size: 9px;
+}
+
+.switch-floor-row select {
+  min-width: 105px;
+  padding: 5px 7px;
+  border: 1px solid #cbd7d1;
+  border-radius: 5px;
+  background: #fff;
+  color: #243c31;
+}
+
+.building-tip {
+  border-left: 4px solid var(--sel-building);
+  background: #eff6ff;
+}
+
+.floor-tip {
+  border-left: 4px solid var(--sel-floor);
+  background: #fff7ed;
+}
+
+.horizontal-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.horizontal-path span {
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: #f3f6f4;
+}
+
+.selection-legend {
+  margin-top: 16px;
+  padding: 10px 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  border: 1px solid #e1e7e4;
+  border-radius: 7px;
+  background: #fafcfb;
+}
+
+.selection-legend-title {
+  width: 100%;
+  color: #5d6a64;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.45px;
+}
+
+.selection-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #59655f;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.selection-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.selection-swatch.block { background: var(--sel-block); }
+.selection-swatch.plot { background: var(--sel-plot); }
+.selection-swatch.building { background: var(--sel-building); }
+.selection-swatch.floor { background: var(--sel-floor); }
+.selection-swatch.apartment { background: var(--sel-apartment); }
+
+/* Long ULPINs stay readable and selectable during the demo. */
+.info-value {
+  user-select: text;
+}
+
+@media (max-width: 1180px) {
+  .camera-controls {
+    top: 64px;
+    gap: 5px;
+  }
+  .camera-controls button {
+    padding: 5px 7px;
+    font-size: 9px;
+  }
+  .view-mode-button {
+    min-width: 82px;
+  }
+}
+
+/* =========================================================
+   STEP 3.7B HOTFIX — SYNCHRONIZED CADASTRAL TREE
+   ========================================================= */
+
+.hierarchy-block.selected > summary {
+  background: #e6f8fb;
+  border-bottom: 1px solid #9fdce6;
+}
+
+.hierarchy-block.selected > summary strong {
+  color: #0e7490;
+}
+
+.hierarchy-plot.selected {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.hierarchy-plot-button,
+.hierarchy-building-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.hierarchy-plot-button {
+  padding: 0;
+}
+
+.hierarchy-plot-button:hover strong {
+  color: #15803d;
+}
+
+.hierarchy-building-button {
+  padding: 5px 6px;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hierarchy-building-button:hover {
+  background: #eff6ff;
+}
+
+.hierarchy-building.selected {
+  margin-left: 4px;
+  padding: 4px 4px 6px 8px;
+  border-left-color: #2563eb;
+  border-radius: 4px;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.14);
+}
+
+.hierarchy-building.selected > .hierarchy-building-button strong {
+  color: #1d4ed8;
+}
+
+.hierarchy-building-drilldown {
+  margin: 5px 4px 2px 4px;
+  padding: 7px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.hierarchy-drilldown-label {
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.25px;
+  text-transform: uppercase;
+}
+
+.hierarchy-floor-grid {
+  max-height: 124px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  padding-right: 2px;
+}
+
+.hierarchy-floor-button,
+.hierarchy-unit-button {
+  border: 1px solid #d5dde8;
+  border-radius: 4px;
+  background: #fff;
+  color: #475569;
+  font-size: 8px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.hierarchy-floor-button {
+  min-height: 25px;
+  padding: 4px 2px;
+}
+
+.hierarchy-floor-button:hover {
+  border-color: #f59e0b;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.hierarchy-floor-button.selected {
+  border-color: #f59e0b;
+  background: #ffedd5;
+  color: #9a3412;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+.hierarchy-unit-drilldown {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid #e8edf2;
+}
+
+.hierarchy-unit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.hierarchy-unit-button {
+  padding: 5px 3px;
+}
+
+.hierarchy-unit-button:hover {
+  border-color: #d946ef;
+  background: #fdf4ff;
+  color: #a21caf;
+}
+
+.hierarchy-unit-button.selected {
+  border-color: #d946ef;
+  background: #fae8ff;
+  color: #86198f;
+  box-shadow: inset 0 0 0 1px rgba(217, 70, 239, 0.16);
+}
+
+.panel-navigation-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-navigation-head .cadastral-breadcrumbs {
+  flex: 1;
+  min-width: 0;
+}
+
+.close-inspection-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d7dfdb;
+  border-radius: 7px;
+  background: #fff;
+  color: #52625a;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close-inspection-button:hover {
+  border-color: #b91c1c;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.workspace.property-panel-closed {
+  grid-template-columns: 255px minmax(0, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .workspace.property-panel-closed {
+    grid-template-columns: 225px minmax(0, 1fr);
+  }
+}

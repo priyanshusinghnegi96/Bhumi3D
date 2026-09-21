@@ -1,8 +1,8 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
 
-export async function searchProperties(query) {
+export async function searchProperties(query, limit = 16) {
   const response = await fetch(
-    `${API_BASE_URL}/search?q=${encodeURIComponent(query)}`
+    `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`
   );
   if (!response.ok) throw new Error("Property search failed");
   return await response.json();
@@ -151,3 +151,15 @@ export async function generateDemoColony() {
 
 
 // Township V3 Step 3.3 uses the same colony API contract with richer architecture and streetscape metadata.
+
+export async function getTownshipUnit(addressCode, floorNumber, unitLetter) {
+  const response = await fetch(
+    `${API_BASE_URL}/township/units/${encodeURIComponent(addressCode)}/${encodeURIComponent(floorNumber)}/${encodeURIComponent(unitLetter)}`
+  );
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Could not load registered township apartment");
+  }
+  return data;
+}

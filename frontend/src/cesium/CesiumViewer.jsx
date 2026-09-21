@@ -21,6 +21,8 @@ import {
   DistanceDisplayCondition,
   Matrix4,
   Rectangle,
+  HeadingPitchRoll,
+  Transforms,
   ImageMaterialProperty,
 } from "cesium";
 
@@ -39,14 +41,17 @@ function CesiumViewer({
   onSelect,
 
   layers,
+  viewMode = "city",
   cameraCommand,
 
   searchText,
+  searchTarget,
   searchTrigger,
   onSearchResult,
 
   validationTrigger,
   resetTrigger,
+  selectionClearTrigger = 0,
   onValidationResult,
 
   footprintPickTrigger,
@@ -68,6 +73,34 @@ function CesiumViewer({
   const townshipBoundsRef =
     useRef(null);
 
+  const blockParcelsRef =
+    useRef(new Map());
+
+  const blockBoundsRef =
+    useRef(new Map());
+
+  const blockVisualsRef =
+    useRef(new Map());
+
+  const searchSelectionEntitiesRef =
+    useRef([]);
+
+  // Interactive building inspection is generated only for the
+  // currently selected building.  This restores mouse-selectable
+  // floors and apartments without permanently rendering thousands
+  // of unit volumes across the entire township.
+  const inspectionFloorEntitiesRef =
+    useRef([]);
+
+  const inspectionUnitEntitiesRef =
+    useRef([]);
+
+  const inspectionBuildingKeyRef =
+    useRef(null);
+
+  const inspectionFloorNumberRef =
+    useRef(null);
+
 
   // ======================================================
   // SCENE REFERENCES
@@ -78,6 +111,7 @@ function CesiumViewer({
 
   const layerEntitiesRef =
     useRef({
+      blocks: [],
       parcels: [],
       buildings: [],
       roads: [],
@@ -272,6 +306,9 @@ function CesiumViewer({
     }
 
     const totalHeight = Math.max(6, Number(building.totalHeight || 12));
+
+    showBuildingFloorInspector(building);
+
     const target = Cartesian3.fromDegrees(
       building.centerLon,
       building.centerLat,
@@ -367,6 +404,39 @@ function CesiumViewer({
       latitude - latDegrees / 2,
       longitude + lonDegrees / 2,
       latitude + latDegrees / 2
+    );
+  }
+
+
+  // ======================================================
+  // STEP 3.6 LOCAL MOBILITY GEOMETRY HELPERS
+  // ======================================================
+
+  function offsetLonLat(longitude, latitude, forwardM, lateralM, headingDeg) {
+    const angle = CesiumMath.toRadians(headingDeg);
+    const eastM = forwardM * Math.cos(angle) - lateralM * Math.sin(angle);
+    const northM = forwardM * Math.sin(angle) + lateralM * Math.cos(angle);
+    const latitudeRadians = CesiumMath.toRadians(latitude);
+    const metresPerLonDegree = 111320 * Math.max(0.25, Math.cos(latitudeRadians));
+
+    return [
+      longitude + eastM / metresPerLonDegree,
+      latitude + northM / 111320,
+    ];
+  }
+
+
+  function localHeadingOrientation(longitude, latitude, altitude, headingDeg) {
+    const position = Cartesian3.fromDegrees(longitude, latitude, altitude);
+
+    // Backend headings use 0° = east/west road axis, 90° = north/south.
+    // A box's local X axis already points east in Cesium's ENU frame, so
+    // the old 90° subtraction rotated every vehicle across its road.
+    const heading = CesiumMath.toRadians(headingDeg);
+
+    return Transforms.headingPitchRollQuaternion(
+      position,
+      new HeadingPitchRoll(heading, 0, 0)
     );
   }
 
@@ -555,6 +625,51 @@ function CesiumViewer({
         entity.properties.validation
           ?.getValue(time)
           ?? "Not checked",
+
+      blockCode:
+        entity.properties.blockCode
+          ?.getValue(time)
+          ?? "—",
+
+      addressCode:
+        entity.properties.addressCode
+          ?.getValue(time)
+          ?? "—",
+
+      addressNumber:
+        entity.properties.addressNumber
+          ?.getValue(time)
+          ?? null,
+
+      buildingName:
+        entity.properties.buildingName
+          ?.getValue(time)
+          ?? "—",
+
+      buildingType:
+        entity.properties.buildingType
+          ?.getValue(time)
+          ?? "—",
+
+      floorCount:
+        entity.properties.floorCount
+          ?.getValue(time)
+          ?? 0,
+
+      unitsPerFloor:
+        entity.properties.unitsPerFloor
+          ?.getValue(time)
+          ?? 0,
+
+      floorHeight:
+        entity.properties.floorHeight
+          ?.getValue(time)
+          ?? 0,
+
+      heightMeters:
+        entity.properties.heightMeters
+          ?.getValue(time)
+          ?? 0,
     };
   }
 
@@ -908,258 +1023,643 @@ function CesiumViewer({
   // HIGHLIGHT BUILDING
   // ======================================================
 
-  function highlightBuildingVisuals(
-    building
-  ) {
+  function dimUnselectedBuildings(selectedBuildingKey = null) {
+    for (const [key, building] of buildingsByKeyRef.current.entries()) {
+      const isSelected = selectedBuildingKey && key === selectedBuildingKey;
+      if (isSelected) continue;
 
-    for (
-      const footprint
-      of building.footprints
-    ) {
-
-      if (
-        footprint.polygon
-      ) {
-
-        footprint
-          .polygon
-          .material =
-            Color.MAGENTA
-              .withAlpha(
-                0.72
-              );
-
-
-        footprint
-          .polygon
-          .outlineColor =
-            Color.YELLOW;
+      for (const footprint of building.footprints || []) {
+        if (!footprint?.polygon) continue;
+        footprint.polygon.material = Color.fromCssColorString("#aab2b0").withAlpha(0.26);
+        footprint.polygon.outlineColor = Color.fromCssColorString("#87918d").withAlpha(0.25);
       }
-    }
-
-
-    for (
-      const slab
-      of building.slabs
-    ) {
-
-      if (
-        slab.polygon
-      ) {
-
-        slab
-          .polygon
-          .material =
-            Color.GOLD
-              .withAlpha(
-                0.36
-              );
-
-
-        slab
-          .polygon
-          .outlineColor =
-            Color.YELLOW;
-      }
-    }
-
-
-    for (
-      const labelEntity
-      of building.labels
-    ) {
-
-      if (
-        labelEntity.label
-      ) {
-
-        labelEntity
-          .label
-          .fillColor =
-            Color.YELLOW;
+      for (const labelEntity of building.labels || []) {
+        if (labelEntity?.label) {
+          labelEntity.label.fillColor = Color.WHITE.withAlpha(0.22);
+        }
       }
     }
   }
 
+  function highlightBuildingVisuals(building) {
+    if (!building) return;
 
-  // ======================================================
-  // HIGHLIGHT CADASTRAL RELATIONSHIP
-  // ======================================================
+    for (const footprint of building.footprints || []) {
+      if (!footprint?.polygon) continue;
+      footprint.polygon.material = Color.fromCssColorString("#2563eb").withAlpha(0.86);
+      footprint.polygon.outlineColor = Color.fromCssColorString("#bfdbfe");
+    }
 
-  function highlightRelationship(
-    data,
-    exactEntity = null
-  ) {
+    for (const slab of building.slabs || []) {
+      if (slab?.polygon) {
+        slab.polygon.material = Color.fromCssColorString("#60a5fa").withAlpha(0.22);
+        slab.polygon.outlineColor = Color.fromCssColorString("#dbeafe").withAlpha(0.72);
+      }
+    }
 
+    for (const labelEntity of building.labels || []) {
+      if (labelEntity?.label) {
+        labelEntity.label.fillColor = Color.fromCssColorString("#dbeafe");
+      }
+    }
+  }
+
+  function highlightRelationship(data, exactEntity = null) {
     restoreVisuals();
+    if (!data) return;
 
+    const parcel = parcelsByUlpInRef.current.get(data.parentUlpIn);
 
-    if (!data) {
-      return;
-    }
-
-
-    // ----------------------------------------------------
-    // PARENT LAND PLOT
-    // ----------------------------------------------------
-
-    const parcel =
-      parcelsByUlpInRef
-        .current
-        .get(
-          data.parentUlpIn
-        );
-
-
-    if (
-      parcel?.polygon
-    ) {
-
-      parcel
-        .polygon
-        .material =
-          Color.GOLD
-            .withAlpha(
-              0.48
-            );
-
-
-      parcel
-        .polygon
-        .outlineColor =
-          Color.YELLOW;
-    }
-
-
-    // ----------------------------------------------------
-    // LAND PLOT SELECTED
-    // ----------------------------------------------------
-
-    if (
-      data.type ===
-      "Land Parcel"
-    ) {
-
-      for (
-        const [
-          key,
-          building,
-        ]
-        of buildingsByKeyRef
-          .current
-          .entries()
-      ) {
-
-        if (
-          key.startsWith(
-            `${data.parentUlpIn}::`
-          )
-        ) {
-
-          highlightBuildingVisuals(
-            building
-          );
-        }
+    // Block = cyan/teal.  Never use the generic exact-entity highlight
+    // for regional/ground assets because a single accidental ground click
+    // can otherwise repaint the entire scene.
+    if (data.type === "Township Block") {
+      const blockCode = data.blockCode;
+      const parcels = blockParcelsRef.current.get(blockCode) || [];
+      for (const blockParcel of parcels) {
+        if (!blockParcel?.polygon) continue;
+        blockParcel.polygon.material = Color.fromCssColorString("#06b6d4").withAlpha(0.16);
+        blockParcel.polygon.outlineColor = Color.fromCssColorString("#22d3ee");
       }
-
-
-      // Boundary violations must remain red
-
       reapplyCadastralViolations();
-
       return;
     }
 
-
-    // ----------------------------------------------------
-    // BUILDING
-    // ----------------------------------------------------
-
-    if (
-      data.building &&
-      data.building !== "—"
-    ) {
-
-      const buildingKey =
-        getBuildingKey(
-          data.parentUlpIn,
-          data.building
-        );
-
-
-      const building =
-        buildingsByKeyRef
-          .current
-          .get(
-            buildingKey
-          );
-
-
-      if (
-        building
-      ) {
-
-        highlightBuildingVisuals(
-          building
-        );
+    // Plot = green.
+    if (data.type === "Land Parcel") {
+      if (parcel?.polygon) {
+        parcel.polygon.material = Color.fromCssColorString("#22c55e").withAlpha(0.30);
+        parcel.polygon.outlineColor = Color.fromCssColorString("#86efac");
       }
-
-
-      // Highlight outlines of properties in building
-
-      for (
-        const object
-        of spatialObjectsRef.current
-      ) {
-
-        if (
-          object.parentUlpIn ===
-            data.parentUlpIn
-          &&
-          object.building ===
-            data.building
-        ) {
-
-          object.entity
-            .polygon
-            .outlineColor =
-              Color.YELLOW;
-        }
-      }
+      reapplyCadastralViolations();
+      return;
     }
 
+    const hasBuilding = data.building && data.building !== "—";
+    const buildingKey = hasBuilding
+      ? getBuildingKey(data.parentUlpIn, data.building)
+      : null;
+    const building = buildingKey
+      ? buildingsByKeyRef.current.get(buildingKey)
+      : null;
 
-    // ----------------------------------------------------
-    // EXACT APARTMENT / PROPERTY
-    // ----------------------------------------------------
+    if (building) {
+      dimUnselectedBuildings(buildingKey);
+      if (parcel?.polygon) {
+        parcel.polygon.material = Color.fromCssColorString("#22c55e").withAlpha(0.10);
+        parcel.polygon.outlineColor = Color.fromCssColorString("#4ade80").withAlpha(0.85);
+      }
+      highlightBuildingVisuals(building);
+    }
 
+    // Floor = orange.
+    if (data.type === "Virtual Floor" && exactEntity?.polygon) {
+      exactEntity.polygon.material = Color.fromCssColorString("#f59e0b").withAlpha(0.48);
+      exactEntity.polygon.outlineColor = Color.fromCssColorString("#fdba74");
+    }
+
+    // Apartment = magenta/purple.
+    if (data.type === "Virtual Apartment" && exactEntity?.polygon) {
+      exactEntity.polygon.material = Color.fromCssColorString("#d946ef").withAlpha(0.86);
+      exactEntity.polygon.outlineColor = Color.fromCssColorString("#f5d0fe");
+    }
+
+    // Legacy cadastral property volumes remain purple, but infrastructure,
+    // roads, landscape and the regional ground are never force-highlighted.
     if (
       exactEntity?.polygon &&
-      data.type !==
-        "Building Footprint"
+      ["3D Property", "Apartment", "Basement Parking", "Underground Utility"].includes(data.type)
     ) {
-
-      exactEntity
-        .polygon
-        .material =
-          Color.YELLOW
-            .withAlpha(
-              0.95
-            );
-
-
-      exactEntity
-        .polygon
-        .outlineColor =
-          Color.BLACK;
+      exactEntity.polygon.material = Color.fromCssColorString("#8b5cf6").withAlpha(0.78);
+      exactEntity.polygon.outlineColor = Color.fromCssColorString("#ddd6fe");
     }
-
-
-    // Ensure known cadastral violations stay red.
 
     reapplyCadastralViolations();
   }
 
+  // ======================================================
+  // SEARCH SELECTION OVERLAYS
+  // ======================================================
+
+  function clearSearchSelection() {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    for (const entity of searchSelectionEntitiesRef.current) {
+      viewer.entities.remove(entity);
+    }
+
+    searchSelectionEntitiesRef.current = [];
+  }
+
+
+  // ======================================================
+  // INTERACTIVE FLOOR / APARTMENT INSPECTION
+  // ======================================================
+
+  function clearInspectionUnits() {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    for (const entity of inspectionUnitEntitiesRef.current) {
+      viewer.entities.remove(entity);
+    }
+
+    inspectionUnitEntitiesRef.current = [];
+    inspectionFloorNumberRef.current = null;
+  }
+
+  function clearBuildingInspection({ restore = true } = {}) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    clearInspectionUnits();
+
+    for (const entity of inspectionFloorEntitiesRef.current) {
+      viewer.entities.remove(entity);
+    }
+
+    inspectionFloorEntitiesRef.current = [];
+    inspectionBuildingKeyRef.current = null;
+
+    if (restore) {
+      restoreVisuals();
+    }
+  }
+
+  function virtualFloorId(building, floorNumber) {
+    const compactAddress = String(building.addressCode || building.buildingCode || "BLDG")
+      .replace(/-/g, "");
+    return `${building.parentUlpIn}-${compactAddress}-F${String(floorNumber).padStart(2, "0")}`;
+  }
+
+  function virtualSpatialId(building, floorNumber, unitLetter) {
+    return `${virtualFloorId(building, floorNumber)}-U${unitLetter}`;
+  }
+
+  function inspectionBoundsPositions(building, expandMeters = 0.30) {
+    const bounds = building?.bounds;
+    if (!bounds) return null;
+
+    const latitude = (bounds.minLat + bounds.maxLat) / 2;
+    const latExpand = expandMeters / 111320;
+    const lonExpand = expandMeters / (
+      111320 * Math.max(0.25, Math.cos(CesiumMath.toRadians(latitude)))
+    );
+
+    return {
+      minLon: bounds.minLon - lonExpand,
+      maxLon: bounds.maxLon + lonExpand,
+      minLat: bounds.minLat - latExpand,
+      maxLat: bounds.maxLat + latExpand,
+      positions: [
+        Cartesian3.fromDegrees(bounds.minLon - lonExpand, bounds.minLat - latExpand),
+        Cartesian3.fromDegrees(bounds.maxLon + lonExpand, bounds.minLat - latExpand),
+        Cartesian3.fromDegrees(bounds.maxLon + lonExpand, bounds.maxLat + latExpand),
+        Cartesian3.fromDegrees(bounds.minLon - lonExpand, bounds.maxLat + latExpand),
+      ],
+    };
+  }
+
+  function inspectionProperties(building, {
+    type,
+    floor = "—",
+    unit = "—",
+    propertyId,
+    verticalRange,
+  }) {
+    return {
+      type,
+      parentUlpIn: building.parentUlpIn,
+      propertyId,
+      building: building.buildingCode,
+      floor: String(floor),
+      unit,
+      verticalRange,
+      validation: type === "Virtual Apartment"
+        ? "Registered PostGIS 3D cadastral unit"
+        : type === "Virtual Floor"
+          ? "Derived vertical floor layer"
+          : "Interactive cadastral volume",
+      blockCode: building.blockCode,
+      addressCode: building.addressCode,
+      addressNumber: building.addressNumber,
+      buildingName: building.buildingName,
+      buildingType: building.buildingType,
+      floorCount: building.floors,
+      unitsPerFloor: building.unitsPerFloor,
+      floorHeight: building.floorHeight,
+      heightMeters: building.totalHeight,
+    };
+  }
+
+  function applyInspectionBuildingStyle(building) {
+    if (!building) return;
+
+    // X-ray the selected building only while its logical cadastral
+    // floors/units are being inspected.  This makes inner volumes
+    // visible and pickable without changing normal City View styling.
+    for (const footprint of building.footprints || []) {
+      if (!footprint?.polygon) continue;
+      footprint.polygon.material = Color.fromCssColorString("#2563eb").withAlpha(0.16);
+      footprint.polygon.outlineColor = Color.fromCssColorString("#93c5fd").withAlpha(0.95);
+    }
+  }
+
+  function showBuildingFloorInspector(building) {
+    const viewer = viewerRef.current;
+    if (!viewer || !building?.bounds) return false;
+
+    const buildingKey = getBuildingKey(building.parentUlpIn, building.buildingCode);
+    const floorCount = Math.max(0, Number(building.floors || 0));
+    const floorHeight = Math.max(0.1, Number(building.floorHeight || 3.2));
+
+    if (floorCount < 1) return false;
+
+    const alreadyBuilt =
+      inspectionBuildingKeyRef.current === buildingKey &&
+      inspectionFloorEntitiesRef.current.length === floorCount;
+
+    if (!alreadyBuilt) {
+      clearBuildingInspection({ restore: false });
+      inspectionBuildingKeyRef.current = buildingKey;
+
+      const expanded = inspectionBoundsPositions(building, 0.34);
+      if (!expanded) return false;
+
+      const shellColor = Color.fromCssColorString("#dcecf3");
+      const outlineColor = Color.fromCssColorString("#b9d3de");
+      const maxDistance = Math.max(260, Number(building.totalHeight || 20) * 7.5);
+
+      for (let floorNumber = 1; floorNumber <= floorCount; floorNumber += 1) {
+        const zMin = (floorNumber - 1) * floorHeight;
+        const zMax = floorNumber * floorHeight;
+
+        const entity = viewer.entities.add({
+          id: `inspect-floor-${building.addressCode}-${floorNumber}`,
+          name: `${building.addressCode} Floor ${floorNumber}`,
+          show: true,
+          polygon: {
+            hierarchy: new PolygonHierarchy(expanded.positions),
+            height: zMin + 0.035,
+            extrudedHeight: Math.max(zMin + 0.16, zMax - 0.045),
+            material: shellColor.withAlpha(0.055),
+            outline: true,
+            outlineColor: outlineColor.withAlpha(0.50),
+            distanceDisplayCondition: new DistanceDisplayCondition(0, maxDistance),
+          },
+          properties: inspectionProperties(building, {
+            type: "Virtual Floor",
+            floor: floorNumber,
+            propertyId: virtualFloorId(building, floorNumber),
+            verticalRange: `${zMin.toFixed(2)}m – ${zMax.toFixed(2)}m`,
+          }),
+        });
+
+        inspectionFloorEntitiesRef.current.push(entity);
+      }
+    }
+
+    applyInspectionBuildingStyle(building);
+    return true;
+  }
+
+  function resetInspectionFloorStyles() {
+    for (const floorEntity of inspectionFloorEntitiesRef.current) {
+      if (!floorEntity?.polygon) continue;
+      floorEntity.polygon.material = Color.fromCssColorString("#dbeafe").withAlpha(0.045);
+      floorEntity.polygon.outlineColor = Color.fromCssColorString("#93c5fd").withAlpha(0.38);
+    }
+  }
+
+  function showFloorUnitInspector(building, floorNumber, selectedUnitLetter = null) {
+    const viewer = viewerRef.current;
+    if (!viewer || !building?.bounds) return false;
+
+    const floorCount = Math.max(0, Number(building.floors || 0));
+    const floorHeight = Math.max(0.1, Number(building.floorHeight || 3.2));
+    const unitsPerFloor = Math.max(0, Number(building.unitsPerFloor || 0));
+    const safeFloor = Number(floorNumber);
+
+    if (
+      !Number.isFinite(safeFloor) ||
+      safeFloor < 1 ||
+      safeFloor > floorCount ||
+      unitsPerFloor < 1
+    ) {
+      return false;
+    }
+
+    showBuildingFloorInspector(building);
+    clearInspectionUnits();
+    inspectionFloorNumberRef.current = safeFloor;
+    resetInspectionFloorStyles();
+
+    const selectedFloorEntity = inspectionFloorEntitiesRef.current[safeFloor - 1];
+    if (selectedFloorEntity?.polygon) {
+      selectedFloorEntity.polygon.material = Color.fromCssColorString("#f59e0b").withAlpha(0.42);
+      selectedFloorEntity.polygon.outlineColor = Color.fromCssColorString("#fed7aa");
+    }
+
+    const bounds = building.bounds;
+    const centerLat = (bounds.minLat + bounds.maxLat) / 2;
+    const widthM = (bounds.maxLon - bounds.minLon) *
+      111320 * Math.max(0.25, Math.cos(CesiumMath.toRadians(centerLat)));
+    const depthM = (bounds.maxLat - bounds.minLat) * 111320;
+
+    // Six apartments are laid out as 3×2 in a wide tower and 2×3
+    // in a deep tower.  Other unit counts use a compact near-square grid.
+    let columns;
+    if (unitsPerFloor === 6) {
+      columns = widthM >= depthM ? 3 : 2;
+    } else {
+      columns = Math.max(1, Math.min(unitsPerFloor, Math.ceil(Math.sqrt(unitsPerFloor))));
+    }
+    const rows = Math.ceil(unitsPerFloor / columns);
+    const lonStep = (bounds.maxLon - bounds.minLon) / columns;
+    const latStep = (bounds.maxLat - bounds.minLat) / rows;
+    const insetRatio = 0.035;
+    const zMin = (safeFloor - 1) * floorHeight;
+    const zMax = safeFloor * floorHeight;
+    const unitPalette = [
+      "#a5b4fc",
+      "#c4b5fd",
+      "#bae6fd",
+      "#bfdbfe",
+      "#ddd6fe",
+      "#c7d2fe",
+      "#bae6fd",
+      "#ddd6fe",
+    ];
+
+    for (let unitIndex = 0; unitIndex < unitsPerFloor; unitIndex += 1) {
+      const columnIndex = unitIndex % columns;
+      const rowIndex = Math.floor(unitIndex / columns);
+      const unitLetter = String.fromCharCode(65 + unitIndex);
+      const displayUnit = `${safeFloor}-${unitLetter}`;
+      const minLon = bounds.minLon + columnIndex * lonStep + lonStep * insetRatio;
+      const maxLon = bounds.minLon + (columnIndex + 1) * lonStep - lonStep * insetRatio;
+      const minLat = bounds.minLat + rowIndex * latStep + latStep * insetRatio;
+      const maxLat = bounds.minLat + (rowIndex + 1) * latStep - latStep * insetRatio;
+      const isSelected =
+        selectedUnitLetter &&
+        String(selectedUnitLetter).toUpperCase() === unitLetter;
+
+      const unitPositions = [
+        Cartesian3.fromDegrees(minLon, minLat),
+        Cartesian3.fromDegrees(maxLon, minLat),
+        Cartesian3.fromDegrees(maxLon, maxLat),
+        Cartesian3.fromDegrees(minLon, maxLat),
+      ];
+
+      const spatialId = virtualSpatialId(building, safeFloor, unitLetter);
+      const unitEntity = viewer.entities.add({
+        id: `inspect-unit-${building.addressCode}-${safeFloor}-${unitLetter}`,
+        name: `${building.addressCode} Apartment ${displayUnit}`,
+        show: true,
+        polygon: {
+          hierarchy: new PolygonHierarchy(unitPositions),
+          height: zMin + 0.14,
+          extrudedHeight: Math.max(zMin + 0.34, zMax - 0.10),
+          material: isSelected
+            ? Color.fromCssColorString("#d946ef").withAlpha(0.88)
+            : Color.fromCssColorString(unitPalette[unitIndex % unitPalette.length]).withAlpha(0.46),
+          outline: true,
+          outlineColor: isSelected
+            ? Color.fromCssColorString("#f5d0fe")
+            : Color.fromCssColorString("#e0e7ff").withAlpha(0.88),
+          distanceDisplayCondition: new DistanceDisplayCondition(0, Math.max(220, Number(building.totalHeight || 20) * 6.5)),
+        },
+        properties: inspectionProperties(building, {
+          type: "Virtual Apartment",
+          floor: safeFloor,
+          unit: displayUnit,
+          propertyId: spatialId,
+          verticalRange: `${zMin.toFixed(2)}m – ${zMax.toFixed(2)}m`,
+        }),
+      });
+
+      inspectionUnitEntitiesRef.current.push(unitEntity);
+    }
+
+    applyInspectionBuildingStyle(building);
+    return true;
+  }
+
+  function buildingForSelectionData(data) {
+    if (!data?.parentUlpIn || !data?.building || data.building === "—") {
+      return null;
+    }
+
+    return buildingsByKeyRef.current.get(
+      getBuildingKey(data.parentUlpIn, data.building)
+    ) || null;
+  }
+
+  function unitLetterFromDisplay(value) {
+    const match = String(value || "").toUpperCase().match(/(?:^|-)\s*([A-Z])$/);
+    return match ? match[1] : null;
+  }
+
+  function isAllowedInspectionClick(data) {
+    if (!data) return false;
+    if (!inspectionBuildingKeyRef.current) {
+      return [
+        "Township Block",
+        "Land Parcel",
+        "Building Footprint",
+        "3D Property",
+        "Apartment",
+        "Basement Parking",
+        "Underground Utility",
+      ].includes(data.type);
+    }
+
+    // Once a building is opened, enforce a strict drill-down workflow:
+    // building -> floor -> apartment.  This prevents click-through to
+    // hidden units or unrelated map assets behind the x-rayed tower.
+    if (inspectionFloorNumberRef.current == null) {
+      return data.type === "Virtual Floor";
+    }
+
+    return data.type === "Virtual Floor" || data.type === "Virtual Apartment";
+  }
+
+  function createParcelSelection(parentUlpIn) {
+    const viewer = viewerRef.current;
+    const parcel = parcelsByUlpInRef.current.get(parentUlpIn);
+
+    if (!viewer || !parcel?.polygon?.hierarchy) return;
+
+    const hierarchy = parcel.polygon.hierarchy.getValue(viewer.clock.currentTime);
+    if (!hierarchy) return;
+
+    const overlay = viewer.entities.add({
+      id: `search-plot-${parentUlpIn}-${Date.now()}`,
+      polygon: {
+        hierarchy,
+        height: 0.44,
+        extrudedHeight: 0.52,
+        material: Color.fromCssColorString("#22c55e").withAlpha(0.18),
+        outline: true,
+        outlineColor: Color.fromCssColorString("#86efac"),
+      },
+    });
+
+    searchSelectionEntitiesRef.current.push(overlay);
+  }
+
+
+  function createFloorOrUnitSelection(building, target) {
+    const viewer = viewerRef.current;
+    const bounds = building?.bounds;
+
+    if (!viewer || !bounds) return;
+
+    const floorNumber = Number(target?.floor || 0);
+    const floorHeight = Number(
+      target?.floor_height || building.floorHeight || 3.2
+    );
+
+    if (!Number.isFinite(floorNumber) || floorNumber < 1) return;
+
+    const zMin = Number.isFinite(Number(target?.z_min))
+      ? Number(target.z_min)
+      : (floorNumber - 1) * floorHeight;
+    const zMax = Number.isFinite(Number(target?.z_max))
+      ? Number(target.z_max)
+      : floorNumber * floorHeight;
+
+    let minLon = bounds.minLon;
+    let maxLon = bounds.maxLon;
+    let minLat = bounds.minLat;
+    let maxLat = bounds.maxLat;
+
+    if (target?.target_type === "unit" && target?.unit) {
+      const unitsPerFloor = Math.max(
+        1,
+        Number(target?.units_per_floor || building.unitsPerFloor || 6)
+      );
+      const unitIndex = Math.max(
+        0,
+        String(target.unit).toUpperCase().charCodeAt(0) - 65
+      );
+      const centerLat = (bounds.minLat + bounds.maxLat) / 2;
+      const widthM = (bounds.maxLon - bounds.minLon) *
+        111320 * Math.max(0.25, Math.cos(CesiumMath.toRadians(centerLat)));
+      const depthM = (bounds.maxLat - bounds.minLat) * 111320;
+      const columns = unitsPerFloor === 6
+        ? (widthM >= depthM ? 3 : 2)
+        : Math.max(1, Math.min(unitsPerFloor, Math.ceil(Math.sqrt(unitsPerFloor))));
+      const rows = Math.ceil(unitsPerFloor / columns);
+      const columnIndex = unitIndex % columns;
+      const rowIndex = Math.floor(unitIndex / columns);
+      const lonStep = (bounds.maxLon - bounds.minLon) / columns;
+      const latStep = (bounds.maxLat - bounds.minLat) / rows;
+      const insetLon = lonStep * 0.06;
+      const insetLat = latStep * 0.06;
+
+      minLon = bounds.minLon + columnIndex * lonStep + insetLon;
+      maxLon = bounds.minLon + (columnIndex + 1) * lonStep - insetLon;
+      minLat = bounds.minLat + rowIndex * latStep + insetLat;
+      maxLat = bounds.minLat + (rowIndex + 1) * latStep - insetLat;
+    }
+
+    const positions = [
+      Cartesian3.fromDegrees(minLon, minLat),
+      Cartesian3.fromDegrees(maxLon, minLat),
+      Cartesian3.fromDegrees(maxLon, maxLat),
+      Cartesian3.fromDegrees(minLon, maxLat),
+    ];
+
+    const volume = viewer.entities.add({
+      id: `search-selection-${Date.now()}-${Math.random()}`,
+      polygon: {
+        hierarchy: new PolygonHierarchy(positions),
+        height: zMin + 0.12,
+        extrudedHeight: Math.max(zMin + 0.28, zMax - 0.08),
+        material: target?.target_type === "unit"
+          ? Color.fromCssColorString("#d946ef").withAlpha(0.82)
+          : Color.fromCssColorString("#f59e0b").withAlpha(0.50),
+        outline: true,
+        outlineColor: target?.target_type === "unit"
+          ? Color.fromCssColorString("#f5d0fe")
+          : Color.fromCssColorString("#fed7aa"),
+      },
+    });
+
+    const labelText = target?.target_type === "unit"
+      ? `${target.address_code || building.addressCode} · ${target.display_unit || `${floorNumber}-${target.unit}`}`
+      : `${target.address_code || building.addressCode} · Floor ${floorNumber}`;
+
+    const label = viewer.entities.add({
+      position: Cartesian3.fromDegrees(
+        (minLon + maxLon) / 2,
+        (minLat + maxLat) / 2,
+        zMax + 2.2
+      ),
+      label: {
+        text: labelText,
+        font: "bold 15px sans-serif",
+        fillColor: Color.WHITE,
+        outlineColor: Color.BLACK,
+        outlineWidth: 4,
+        style: LabelStyle.FILL_AND_OUTLINE,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        verticalOrigin: VerticalOrigin.BOTTOM,
+      },
+    });
+
+    searchSelectionEntitiesRef.current.push(volume, label);
+  }
+
+  function focusBlock(blockCode) {
+    const viewer = viewerRef.current;
+    const bounds = blockBoundsRef.current.get(blockCode);
+    const parcels = blockParcelsRef.current.get(blockCode) || [];
+
+    if (!viewer || !bounds) return false;
+
+    restoreVisuals();
+
+    for (const parcel of parcels) {
+      if (parcel?.polygon) {
+        parcel.polygon.material = Color.fromCssColorString("#06b6d4").withAlpha(0.14);
+        parcel.polygon.outlineColor = Color.fromCssColorString("#22d3ee");
+      }
+    }
+
+    const overlayPositions = [
+      Cartesian3.fromDegrees(bounds.minLon, bounds.minLat),
+      Cartesian3.fromDegrees(bounds.maxLon, bounds.minLat),
+      Cartesian3.fromDegrees(bounds.maxLon, bounds.maxLat),
+      Cartesian3.fromDegrees(bounds.minLon, bounds.maxLat),
+    ];
+
+    const overlay = viewer.entities.add({
+      polygon: {
+        hierarchy: new PolygonHierarchy(overlayPositions),
+        height: 0.48,
+        extrudedHeight: 0.54,
+        material: Color.fromCssColorString("#06b6d4").withAlpha(0.055),
+        outline: true,
+        outlineColor: Color.fromCssColorString("#22d3ee"),
+      },
+    });
+    searchSelectionEntitiesRef.current.push(overlay);
+
+    viewer.camera.flyTo({
+      destination: Rectangle.fromDegrees(
+        bounds.minLon,
+        bounds.minLat,
+        bounds.maxLon,
+        bounds.maxLat
+      ),
+      duration: 1.25,
+    });
+
+    return true;
+  }
 
   // ======================================================
   // FIND PROPERTY USED IN TOPOLOGY CONFLICT
@@ -1484,7 +1984,7 @@ function CesiumViewer({
       new Viewer(
         cesiumContainer.current,
         {
-          globe: false,
+          baseLayer: false,
 
           baseLayerPicker: false,
 
@@ -1500,9 +2000,17 @@ function CesiumViewer({
 
           homeButton: false,
 
-          skyBox: false,
+          // Keep the map self-contained (no external imagery token) but
+          // render the WebGL canvas with alpha so the CSS sky gradient can
+          // show through beyond the generated regional ground plane.
+          contextOptions: {
+            webgl: {
+              alpha: true,
+              antialias: true,
+            },
+          },
 
-          skyAtmosphere: false,
+          skyBox: false,
 
           infoBox: false,
 
@@ -1526,9 +2034,24 @@ function CesiumViewer({
 
 
     viewer.scene.backgroundColor =
-      Color.fromCssColorString(
-        "#87CEEB"
-      );
+      Color.fromCssColorString("#b7cbd2");
+
+    if (viewer.scene.globe) {
+      viewer.scene.globe.baseColor = Color.fromCssColorString("#6d8064");
+      viewer.scene.globe.showGroundAtmosphere = true;
+      viewer.scene.globe.depthTestAgainstTerrain = false;
+    }
+
+    if (viewer.scene.fog) {
+      viewer.scene.fog.enabled = true;
+      viewer.scene.fog.density = 0.00018;
+      viewer.scene.fog.minimumBrightness = 0.55;
+    }
+
+    viewer.scene.highDynamicRange = false;
+    if (viewer.scene.postProcessStages?.fxaa) {
+      viewer.scene.postProcessStages.fxaa.enabled = true;
+    }
 
 
     // ====================================================
@@ -1570,6 +2093,14 @@ function CesiumViewer({
         parcelsByUlpInRef.current =
           new Map();
 
+        blockParcelsRef.current =
+          new Map();
+
+        blockBoundsRef.current =
+          new Map();
+
+        clearSearchSelection();
+
 
         buildingsByKeyRef.current =
           new Map();
@@ -1577,6 +2108,7 @@ function CesiumViewer({
 
         layerEntitiesRef.current =
           {
+            blocks: [],
             parcels: [],
             buildings: [],
             roads: [],
@@ -1707,6 +2239,33 @@ function CesiumViewer({
 
                 validation:
                   "Valid",
+
+                blockCode:
+                  parcel.block_code || "—",
+
+                addressCode:
+                  parcel.address_code || "—",
+
+                addressNumber:
+                  parcel.address_number || 0,
+
+                buildingName:
+                  parcel.name,
+
+                buildingType:
+                  parcel.land_use || "Land Parcel",
+
+                floorCount:
+                  0,
+
+                unitsPerFloor:
+                  0,
+
+                floorHeight:
+                  0,
+
+                heightMeters:
+                  0,
               },
             });
 
@@ -1732,6 +2291,41 @@ function CesiumViewer({
             .push(
               entity
             );
+
+          const blockCode = parcel.block_code;
+          if (blockCode) {
+            if (!blockParcelsRef.current.has(blockCode)) {
+              blockParcelsRef.current.set(blockCode, []);
+            }
+            blockParcelsRef.current.get(blockCode).push(entity);
+
+            if (parcelBounds) {
+              const current = blockBoundsRef.current.get(blockCode);
+              if (!current) {
+                blockBoundsRef.current.set(blockCode, { ...parcelBounds });
+              } else {
+                current.minLon = Math.min(current.minLon, parcelBounds.minLon);
+                current.minLat = Math.min(current.minLat, parcelBounds.minLat);
+                current.maxLon = Math.max(current.maxLon, parcelBounds.maxLon);
+                current.maxLat = Math.max(current.maxLat, parcelBounds.maxLat);
+              }
+            }
+          }
+
+          spatialObjectsRef.current.push({
+            id: parcel.ulpin,
+            category: "plot",
+            entity,
+            propertyId: parcel.ulpin,
+            parentUlpIn: parcel.ulpin,
+            building: "—",
+            searchTerms: [
+              parcel.ulpin,
+              parcel.name,
+              parcel.address_code,
+              parcel.block_code ? `Block ${parcel.block_code}` : "",
+            ].filter(Boolean),
+          });
         }
 
 
@@ -1749,6 +2343,83 @@ function CesiumViewer({
             centerLon: (townshipMinLon + townshipMaxLon) / 2,
             centerLat: (townshipMinLat + townshipMaxLat) / 2,
           };
+        }
+
+        // =================================================
+        // FOUR TOWNSHIP BLOCKS
+        // =================================================
+
+        const blockColors = {
+          A: "#4f87d8",
+          B: "#4b9b70",
+          C: "#c58b45",
+          D: "#8a67b2",
+        };
+
+        for (const [blockCode, bounds] of blockBoundsRef.current.entries()) {
+          const color = Color.fromCssColorString(blockColors[blockCode] || "#ffffff");
+          const positions = [
+            Cartesian3.fromDegrees(bounds.minLon, bounds.minLat),
+            Cartesian3.fromDegrees(bounds.maxLon, bounds.minLat),
+            Cartesian3.fromDegrees(bounds.maxLon, bounds.maxLat),
+            Cartesian3.fromDegrees(bounds.minLon, bounds.maxLat),
+          ];
+
+          const boundary = viewer.entities.add({
+            id: `township-block-${blockCode}`,
+            name: `Block ${blockCode}`,
+            show: layers.blocks,
+            polygon: {
+              hierarchy: new PolygonHierarchy(positions),
+              height: 0.40,
+              extrudedHeight: 0.43,
+              material: color.withAlpha(0.035),
+              outline: true,
+              outlineColor: color.withAlpha(0.92),
+            },
+            properties: {
+              type: "Township Block",
+              parentUlpIn: "—",
+              propertyId: `BLOCK-${blockCode}`,
+              building: "—",
+              floor: "—",
+              unit: "—",
+              verticalRange: "Surface",
+              validation: "Township address block",
+              blockCode,
+              addressCode: `Block ${blockCode}`,
+              addressNumber: 0,
+              buildingName: `Block ${blockCode}`,
+              buildingType: "Township Block",
+              floorCount: 0,
+              unitsPerFloor: 0,
+              floorHeight: 0,
+              heightMeters: 0,
+            },
+          });
+
+          const label = viewer.entities.add({
+            id: `township-block-label-${blockCode}`,
+            position: Cartesian3.fromDegrees(
+              (bounds.minLon + bounds.maxLon) / 2,
+              (bounds.minLat + bounds.maxLat) / 2,
+              6
+            ),
+            show: layers.blocks,
+            label: {
+              text: `BLOCK ${blockCode}`,
+              font: "700 14px sans-serif",
+              fillColor: Color.WHITE,
+              outlineColor: color,
+              outlineWidth: 4,
+              style: LabelStyle.FILL_AND_OUTLINE,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              distanceDisplayCondition: new DistanceDisplayCondition(220, 900),
+            },
+          });
+
+          layerEntitiesRef.current.blocks.push(boundary, label);
+          blockVisualsRef.current.set(blockCode, { boundary, label, color });
         }
 
 
@@ -1892,32 +2563,55 @@ function CesiumViewer({
           }
 
           if (
-            ["township_ground", "green_belt"].includes(assetType) &&
+            ["regional_context_ground", "township_ground", "green_belt"].includes(assetType) &&
             asset.geometry.type === "Polygon"
           ) {
             const positions = geometryToPositions(asset.geometry);
             if (positions.length < 3) continue;
+            const isRegionalContext = assetType === "regional_context_ground";
             const isGreenBelt = assetType === "green_belt";
+
+            let materialColor = "#7f8f75";
+            let materialAlpha = 0.97;
+            let height = 0.025;
+            let extrudedHeight = 0.055;
+
+            if (isGreenBelt) {
+              materialColor = "#496f43";
+              materialAlpha = 0.98;
+              height = 0.11;
+              extrudedHeight = 0.17;
+            } else if (isRegionalContext) {
+              materialColor = "#708268";
+              materialAlpha = 1.0;
+              height = -0.20;
+              extrudedHeight = -0.12;
+            }
+
             const groundEntity = viewer.entities.add({
               id: `township-ground-${asset.id}`,
               name: asset.name,
               show: layers.landscape,
               polygon: {
                 hierarchy: new PolygonHierarchy(positions),
-                height: isGreenBelt ? 0.11 : 0.025,
-                extrudedHeight: isGreenBelt ? 0.17 : 0.055,
-                material: Color.fromCssColorString(
-                  isGreenBelt ? "#496f43" : "#8f9b82"
-                ).withAlpha(isGreenBelt ? 0.98 : 0.97),
+                height,
+                extrudedHeight,
+                material: Color.fromCssColorString(materialColor).withAlpha(materialAlpha),
                 outline: isGreenBelt,
                 outlineColor: Color.fromCssColorString("#355332").withAlpha(0.8),
               },
               properties: {
-                type: isGreenBelt ? "Township Green Belt" : "Township Ground",
+                type: isRegionalContext
+                  ? "Regional Landscape Context"
+                  : isGreenBelt
+                    ? "Township Green Belt"
+                    : "Township Ground",
                 parentUlpIn: "CadastraX3D Township",
                 propertyId: `ASSET-${asset.id}`,
                 building: "—", floor: "Surface", unit: "—", verticalRange: "Surface",
-                validation: "Step 3.4 urban ground / landscape foundation",
+                validation: isRegionalContext
+                  ? "Non-cadastral visual context — Step 3.7A"
+                  : "Township urban ground / landscape foundation",
               },
             });
             layerEntitiesRef.current.landscape.push(groundEntity);
@@ -2250,46 +2944,255 @@ function CesiumViewer({
             assetType === "vehicle" &&
             asset.geometry.type === "Polygon"
           ) {
-            const positions = geometryToPositions(asset.geometry);
-            if (positions.length < 3) continue;
-
             const vehicleKind = asset.properties?.vehicle_kind || "car";
-            const vehicleHeight = Number(asset.properties?.height_m || 1.45);
+            const isBus = vehicleKind.includes("bus");
+            const isAmbulance = vehicleKind === "ambulance";
+            const isSchoolBus = vehicleKind === "school_bus";
+            const isTownshipBus = vehicleKind === "township_bus";
+
+            const fallbackBounds = getGeometryBounds(asset.geometry);
+            const centerLon = Number(
+              asset.properties?.center_lon ??
+              ((fallbackBounds.minLon + fallbackBounds.maxLon) / 2)
+            );
+            const centerLat = Number(
+              asset.properties?.center_lat ??
+              ((fallbackBounds.minLat + fallbackBounds.maxLat) / 2)
+            );
+            const headingDeg = Number(asset.properties?.heading_deg || 0);
+            const vehicleHeight = Number(
+              asset.properties?.height_m || (isBus ? 3.15 : isAmbulance ? 2.45 : 1.45)
+            );
+            const lengthM = Number(
+              asset.properties?.length_m || (isBus ? 9.5 : isAmbulance ? 5.4 : 4.4)
+            );
+            const widthM = Number(
+              asset.properties?.width_m || (isBus ? 2.45 : isAmbulance ? 2.1 : 1.9)
+            );
             const vehicleColor =
               Color.fromCssColorString(asset.properties?.color || "#d7dbe0") ||
               Color.LIGHTGRAY;
-            const detailDistance = new DistanceDisplayCondition(0, 900);
+            const glassColor = Color.fromCssColorString("#263941").withAlpha(0.96);
+            const tyreColor = Color.fromCssColorString("#171b1d").withAlpha(0.98);
+            const trimColor = Color.fromCssColorString("#d7dde0").withAlpha(0.96);
+            const detailDistance = new DistanceDisplayCondition(0, 720);
+            const silhouetteDistance = new DistanceDisplayCondition(0, 1050);
+            const parts = [];
 
-            const vehicle = viewer.entities.add({
-              id: `vehicle-${asset.id}`,
-              name: asset.name,
-              show: layers.mobility,
-              polygon: {
-                hierarchy: new PolygonHierarchy(positions),
-                height: 0.10,
-                extrudedHeight: vehicleHeight,
-                material: vehicleColor.withAlpha(0.98),
+            const addVehicleBox = ({
+              forward = 0,
+              lateral = 0,
+              altitude,
+              dimensions,
+              material,
+              distance = detailDistance,
+              id,
+              name,
+              properties,
+              outline = false,
+            }) => {
+              const [longitude, latitude] = offsetLonLat(
+                centerLon,
+                centerLat,
+                forward,
+                lateral,
+                headingDeg
+              );
+              const position = Cartesian3.fromDegrees(longitude, latitude, altitude);
+              const entity = viewer.entities.add({
+                ...(id ? { id } : {}),
+                ...(name ? { name } : {}),
+                position,
+                orientation: localHeadingOrientation(
+                  longitude,
+                  latitude,
+                  altitude,
+                  headingDeg
+                ),
+                show: layers.mobility,
+                box: {
+                  dimensions: new Cartesian3(...dimensions),
+                  material,
+                  outline,
+                  outlineColor: Color.fromCssColorString("#20272a").withAlpha(0.70),
+                  distanceDisplayCondition: distance,
+                },
+                ...(properties ? { properties } : {}),
+              });
+              parts.push(entity);
+              return entity;
+            };
+
+            const bodyProperties = {
+              type: isAmbulance
+                ? "Emergency Vehicle"
+                : isBus
+                  ? "Transit Vehicle"
+                  : "Township Vehicle",
+              parentUlpIn: asset.properties?.context || "Township Mobility",
+              propertyId: `ASSET-${asset.id}`,
+              building: "—",
+              floor: "Road / Parking",
+              unit: "—",
+              verticalRange: `0m – ${vehicleHeight}m`,
+              validation: "Step 3.6 polished mobility asset",
+            };
+
+            if (isBus) {
+              const lowerHeight = Math.max(0.82, vehicleHeight * 0.48);
+              const upperBodyHeight = Math.max(0.78, vehicleHeight * 0.31);
+              const windowHeight = Math.max(0.52, vehicleHeight * 0.22);
+
+              addVehicleBox({
+                id: `vehicle-${asset.id}`,
+                name: asset.name,
+                altitude: 0.13 + lowerHeight / 2,
+                dimensions: [lengthM, widthM, lowerHeight],
+                material: vehicleColor.withAlpha(0.99),
+                distance: silhouetteDistance,
+                properties: bodyProperties,
                 outline: true,
-                outlineColor: Color.fromCssColorString("#2a2e31").withAlpha(0.80),
-                distanceDisplayCondition: detailDistance,
-              },
-              properties: {
-                type: vehicleKind === "ambulance"
-                  ? "Emergency Vehicle"
-                  : vehicleKind.includes("bus")
-                    ? "Transit Vehicle"
-                    : "Township Vehicle",
-                parentUlpIn: asset.properties?.context || "Township Mobility",
-                propertyId: `ASSET-${asset.id}`,
-                building: "—",
-                floor: "Road / Parking",
-                unit: "—",
-                verticalRange: `0m – ${vehicleHeight}m`,
-                validation: "Step 3.5 mobility asset",
-              },
-            });
+              });
 
-            layerEntitiesRef.current.mobility.push(vehicle);
+              addVehicleBox({
+                altitude: lowerHeight + upperBodyHeight / 2 - 0.02,
+                dimensions: [lengthM * 0.94, widthM * 0.96, upperBodyHeight],
+                material: vehicleColor.withAlpha(0.99),
+              });
+
+              addVehicleBox({
+                altitude: vehicleHeight * 0.67,
+                dimensions: [lengthM * 0.88, widthM * 1.012, windowHeight],
+                material: glassColor,
+              });
+
+              addVehicleBox({
+                altitude: vehicleHeight - 0.055,
+                dimensions: [lengthM * 0.93, widthM * 0.94, 0.11],
+                material: isSchoolBus
+                  ? Color.fromCssColorString("#e2bd45")
+                  : Color.fromCssColorString("#ece3c9"),
+              });
+
+              // A coloured belt keeps township and school buses visually distinct.
+              addVehicleBox({
+                altitude: lowerHeight * 0.64,
+                dimensions: [lengthM * 0.90, widthM * 1.018, 0.14],
+                material: isSchoolBus
+                  ? Color.fromCssColorString("#2b3032")
+                  : Color.fromCssColorString("#164c3f"),
+              });
+            } else if (isAmbulance) {
+              const lowerHeight = 0.78;
+
+              addVehicleBox({
+                id: `vehicle-${asset.id}`,
+                name: asset.name,
+                altitude: 0.13 + lowerHeight / 2,
+                dimensions: [lengthM, widthM, lowerHeight],
+                material: vehicleColor.withAlpha(0.99),
+                distance: silhouetteDistance,
+                properties: bodyProperties,
+                outline: true,
+              });
+
+              addVehicleBox({
+                forward: -lengthM * 0.10,
+                altitude: 1.48,
+                dimensions: [lengthM * 0.67, widthM * 0.94, 1.55],
+                material: vehicleColor.withAlpha(0.99),
+              });
+
+              addVehicleBox({
+                forward: lengthM * 0.31,
+                altitude: 1.15,
+                dimensions: [lengthM * 0.27, widthM * 0.90, 0.68],
+                material: glassColor,
+              });
+
+              addVehicleBox({
+                altitude: 1.08,
+                dimensions: [lengthM * 0.84, widthM * 1.018, 0.17],
+                material: Color.fromCssColorString("#c53932"),
+              });
+
+              addVehicleBox({
+                forward: -0.34,
+                lateral: -0.23,
+                altitude: vehicleHeight + 0.07,
+                dimensions: [0.46, 0.18, 0.11],
+                material: Color.fromCssColorString("#316dcc"),
+              });
+              addVehicleBox({
+                forward: -0.34,
+                lateral: 0.23,
+                altitude: vehicleHeight + 0.07,
+                dimensions: [0.46, 0.18, 0.11],
+                material: Color.fromCssColorString("#d34038"),
+              });
+            } else {
+              const lowerHeight = Math.max(0.55, vehicleHeight * 0.46);
+              const cabinHeight = Math.max(0.48, vehicleHeight * 0.40);
+
+              addVehicleBox({
+                id: `vehicle-${asset.id}`,
+                name: asset.name,
+                altitude: 0.12 + lowerHeight / 2,
+                dimensions: [lengthM, widthM, lowerHeight],
+                material: vehicleColor.withAlpha(0.99),
+                distance: silhouetteDistance,
+                properties: bodyProperties,
+                outline: true,
+              });
+
+              addVehicleBox({
+                forward: -lengthM * 0.02,
+                altitude: lowerHeight + cabinHeight / 2 - 0.02,
+                dimensions: [lengthM * 0.52, widthM * 0.81, cabinHeight],
+                material: glassColor,
+              });
+
+              addVehicleBox({
+                forward: -lengthM * 0.02,
+                altitude: vehicleHeight - 0.045,
+                dimensions: [lengthM * 0.43, widthM * 0.73, 0.09],
+                material: vehicleColor.withAlpha(0.99),
+              });
+
+              // Front and rear brightwork give the small cars a readable direction.
+              addVehicleBox({
+                forward: lengthM * 0.49,
+                altitude: 0.52,
+                dimensions: [0.08, widthM * 0.70, 0.16],
+                material: trimColor,
+              });
+              addVehicleBox({
+                forward: -lengthM * 0.49,
+                altitude: 0.50,
+                dimensions: [0.08, widthM * 0.58, 0.12],
+                material: Color.fromCssColorString("#94352f"),
+              });
+            }
+
+            const wheelForward = isBus ? lengthM * 0.34 : lengthM * 0.31;
+            const wheelLateral = widthM * 0.52;
+            const wheelLength = isBus ? 0.82 : 0.68;
+            const wheelHeight = isBus ? 0.56 : 0.44;
+
+            for (const forward of [-wheelForward, wheelForward]) {
+              for (const lateral of [-wheelLateral, wheelLateral]) {
+                addVehicleBox({
+                  forward,
+                  lateral,
+                  altitude: wheelHeight / 2,
+                  dimensions: [wheelLength, 0.24, wheelHeight],
+                  material: tyreColor,
+                  distance: detailDistance,
+                });
+              }
+            }
+
+            layerEntitiesRef.current.mobility.push(...parts);
             continue;
           }
 
@@ -2297,50 +3200,111 @@ function CesiumViewer({
             assetType === "bus_shelter" &&
             asset.geometry.type === "Polygon"
           ) {
-            const positions = geometryToPositions(asset.geometry);
-            if (positions.length < 3) continue;
-
+            const bounds = getGeometryBounds(asset.geometry);
+            const centerLon = Number(
+              asset.properties?.center_lon ?? ((bounds.minLon + bounds.maxLon) / 2)
+            );
+            const centerLat = Number(
+              asset.properties?.center_lat ?? ((bounds.minLat + bounds.maxLat) / 2)
+            );
+            const headingDeg = Number(asset.properties?.heading_deg || 0);
+            const lengthM = Number(asset.properties?.length_m || 8.0);
+            const widthM = Number(asset.properties?.width_m || 3.0);
             const height = Number(asset.properties?.height_m || 2.8);
-            const shelterParts = [];
+            const parts = [];
+            const distance = new DistanceDisplayCondition(0, 620);
 
-            shelterParts.push(viewer.entities.add({
+            const addShelterBox = ({
+              forward = 0,
+              lateral = 0,
+              altitude,
+              dimensions,
+              material,
+              id,
+              name,
+              properties,
+            }) => {
+              const [longitude, latitude] = offsetLonLat(
+                centerLon,
+                centerLat,
+                forward,
+                lateral,
+                headingDeg
+              );
+              const entity = viewer.entities.add({
+                ...(id ? { id } : {}),
+                ...(name ? { name } : {}),
+                position: Cartesian3.fromDegrees(longitude, latitude, altitude),
+                orientation: localHeadingOrientation(
+                  longitude,
+                  latitude,
+                  altitude,
+                  headingDeg
+                ),
+                show: layers.mobility,
+                box: {
+                  dimensions: new Cartesian3(...dimensions),
+                  material,
+                  distanceDisplayCondition: distance,
+                },
+                ...(properties ? { properties } : {}),
+              });
+              parts.push(entity);
+            };
+
+            const shelterProperties = {
+              type: "Bus Shelter",
+              parentUlpIn: "Township Public Transit",
+              propertyId: `ASSET-${asset.id}`,
+              building: "—",
+              floor: "Surface",
+              unit: "—",
+              verticalRange: `0m – ${height}m`,
+              validation: "Step 3.6 refined glass transit shelter",
+            };
+
+            addShelterBox({
               id: `bus-shelter-${asset.id}`,
               name: asset.name,
-              show: layers.mobility,
-              polygon: {
-                hierarchy: new PolygonHierarchy(positions),
-                height: 0.12,
-                extrudedHeight: height,
-                material: Color.fromCssColorString("#6f8f96").withAlpha(0.30),
-                outline: true,
-                outlineColor: Color.fromCssColorString("#28383c").withAlpha(0.92),
-                distanceDisplayCondition: new DistanceDisplayCondition(0, 760),
-              },
-              properties: {
-                type: "Bus Shelter",
-                parentUlpIn: "Township Public Transit",
-                propertyId: `ASSET-${asset.id}`,
-                building: "—",
-                floor: "Surface",
-                unit: "—",
-                verticalRange: `0m – ${height}m`,
-                validation: "Step 3.5 public-transit shelter",
-              },
-            }));
+              altitude: 0.07,
+              dimensions: [lengthM * 1.02, widthM * 1.04, 0.14],
+              material: Color.fromCssColorString("#6b6b64").withAlpha(0.98),
+              properties: shelterProperties,
+            });
 
-            // A dark roof slab gives the shelter a readable silhouette.
-            shelterParts.push(viewer.entities.add({
-              show: layers.mobility,
-              polygon: {
-                hierarchy: new PolygonHierarchy(positions),
-                height: height - 0.18,
-                extrudedHeight: height + 0.08,
-                material: Color.fromCssColorString("#2f3b3e").withAlpha(0.96),
-                distanceDisplayCondition: new DistanceDisplayCondition(0, 760),
-              },
-            }));
+            addShelterBox({
+              altitude: height,
+              dimensions: [lengthM * 1.04, widthM * 1.05, 0.18],
+              material: Color.fromCssColorString("#26383c").withAlpha(0.98),
+            });
 
-            layerEntitiesRef.current.mobility.push(...shelterParts);
+            addShelterBox({
+              lateral: widthM * 0.43,
+              altitude: height * 0.51,
+              dimensions: [lengthM * 0.88, 0.08, height * 0.70],
+              material: Color.fromCssColorString("#9bc0c9").withAlpha(0.30),
+            });
+
+            addShelterBox({
+              lateral: widthM * 0.20,
+              altitude: 0.33,
+              dimensions: [lengthM * 0.56, 0.48, 0.46],
+              material: Color.fromCssColorString("#7d573b").withAlpha(0.98),
+            });
+
+            for (const forward of [-lengthM * 0.45, lengthM * 0.45]) {
+              for (const lateral of [-widthM * 0.42, widthM * 0.42]) {
+                addShelterBox({
+                  forward,
+                  lateral,
+                  altitude: height * 0.49,
+                  dimensions: [0.14, 0.14, height * 0.90],
+                  material: Color.fromCssColorString("#334447").withAlpha(0.98),
+                });
+              }
+            }
+
+            layerEntitiesRef.current.mobility.push(...parts);
             continue;
           }
 
@@ -2351,10 +3315,11 @@ function CesiumViewer({
             const [longitude, latitude] = asset.geometry.coordinates;
             const isEv = assetType === "ev_charger";
             const isBus = assetType === "bus_stop_sign";
-            const height = Number(asset.properties?.height_m || (isEv ? 1.45 : 3.0));
+            const headingDeg = Number(asset.properties?.heading_deg || 0);
+            const height = Number(asset.properties?.height_m || (isEv ? 1.16 : 2.75));
             const text = String(
               asset.properties?.text ||
-              (isEv ? "EV" : isBus ? "BUS STOP" : asset.name)
+              (isEv ? "EV" : isBus ? "BUS" : asset.name)
             );
             const parts = [];
 
@@ -2365,11 +3330,11 @@ function CesiumViewer({
                 position: Cartesian3.fromDegrees(longitude, latitude, height / 2),
                 show: layers.mobility,
                 box: {
-                  dimensions: new Cartesian3(0.62, 0.46, height),
-                  material: Color.fromCssColorString("#2f7657").withAlpha(0.98),
+                  dimensions: new Cartesian3(0.40, 0.32, height),
+                  material: Color.fromCssColorString("#2e7256").withAlpha(0.99),
                   outline: true,
-                  outlineColor: Color.fromCssColorString("#dbe9e2").withAlpha(0.90),
-                  distanceDisplayCondition: new DistanceDisplayCondition(0, 520),
+                  outlineColor: Color.fromCssColorString("#d7e7de").withAlpha(0.88),
+                  distanceDisplayCondition: new DistanceDisplayCondition(0, 440),
                 },
                 properties: {
                   type: "EV Charging Point",
@@ -2379,21 +3344,41 @@ function CesiumViewer({
                   floor: "Surface",
                   unit: "—",
                   verticalRange: `0m – ${height}m`,
-                  validation: "Step 3.5 EV mobility infrastructure",
+                  validation: "Step 3.6 refined EV charging furniture",
+                },
+              }));
+
+              parts.push(viewer.entities.add({
+                position: Cartesian3.fromDegrees(longitude, latitude, height * 0.68),
+                show: layers.mobility,
+                box: {
+                  dimensions: new Cartesian3(0.42, 0.34, 0.20),
+                  material: Color.fromCssColorString("#15292b").withAlpha(0.98),
+                  distanceDisplayCondition: new DistanceDisplayCondition(0, 360),
                 },
               }));
             } else {
+              const boardWidth = isBus ? 0.76 : 2.25;
+              const boardHeight = isBus ? 0.72 : 0.66;
+              const boardAltitude = height - boardHeight * 0.52;
+              const orientation = localHeadingOrientation(
+                longitude,
+                latitude,
+                boardAltitude,
+                headingDeg
+              );
+
               parts.push(viewer.entities.add({
                 id: `${assetType}-${asset.id}`,
                 name: asset.name,
-                position: Cartesian3.fromDegrees(longitude, latitude, height / 2),
+                position: Cartesian3.fromDegrees(longitude, latitude, height * 0.43),
                 show: layers.mobility,
                 cylinder: {
-                  length: height,
-                  topRadius: 0.07,
-                  bottomRadius: 0.09,
-                  material: Color.fromCssColorString("#384247"),
-                  distanceDisplayCondition: new DistanceDisplayCondition(0, 620),
+                  length: height * 0.86,
+                  topRadius: 0.055,
+                  bottomRadius: 0.075,
+                  material: Color.fromCssColorString("#3a4649"),
+                  distanceDisplayCondition: new DistanceDisplayCondition(0, 470),
                 },
                 properties: {
                   type: isBus ? "Bus Stop Sign" : "Township Wayfinding",
@@ -2403,28 +3388,52 @@ function CesiumViewer({
                   floor: "Surface",
                   unit: "—",
                   verticalRange: `0m – ${height}m`,
-                  validation: "Step 3.5 public-realm signage",
+                  validation: "Step 3.6 compact public-realm signage",
+                },
+              }));
+
+              parts.push(viewer.entities.add({
+                position: Cartesian3.fromDegrees(longitude, latitude, boardAltitude),
+                orientation,
+                show: layers.mobility,
+                box: {
+                  dimensions: new Cartesian3(boardWidth, 0.13, boardHeight),
+                  material: isBus
+                    ? Color.fromCssColorString("#d7aa2f").withAlpha(0.99)
+                    : Color.fromCssColorString("#174d3f").withAlpha(0.99),
+                  outline: true,
+                  outlineColor: Color.fromCssColorString("#e9eee9").withAlpha(0.80),
+                  distanceDisplayCondition: new DistanceDisplayCondition(0, isBus ? 390 : 440),
                 },
               }));
             }
 
             parts.push(viewer.entities.add({
-              position: Cartesian3.fromDegrees(longitude, latitude, height + 0.45),
+              position: Cartesian3.fromDegrees(
+                longitude,
+                latitude,
+                isEv ? height * 0.78 : height - 0.34
+              ),
               show: layers.mobility,
               label: {
                 text,
-                font: isEv ? "bold 12px sans-serif" : "bold 13px sans-serif",
+                font: isEv
+                  ? "bold 8px sans-serif"
+                  : (isBus ? "bold 10px sans-serif" : "bold 11px sans-serif"),
                 style: LabelStyle.FILL_AND_OUTLINE,
                 fillColor: isEv
                   ? Color.fromCssColorString("#d9f4e5")
-                  : (isBus
-                    ? Color.fromCssColorString("#f3d05f")
-                    : Color.WHITE),
-                outlineColor: Color.fromCssColorString("#1b2527"),
-                outlineWidth: 4,
+                  : Color.WHITE,
+                outlineColor: Color.fromCssColorString("#182224"),
+                outlineWidth: 3,
+                showBackground: !isEv,
+                backgroundColor: Color.fromCssColorString("#153a31").withAlpha(0.62),
                 verticalOrigin: VerticalOrigin.CENTER,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                distanceDisplayCondition: new DistanceDisplayCondition(0, isEv ? 420 : 560),
+                disableDepthTestDistance: 650,
+                distanceDisplayCondition: new DistanceDisplayCondition(
+                  0,
+                  isEv ? 125 : isBus ? 330 : 360
+                ),
               },
             }));
 
@@ -3516,6 +4525,18 @@ function CesiumViewer({
             ??
             "Building";
 
+          const blockCode =
+            feature.properties?.block_code ?? "—";
+
+          const addressCode =
+            feature.properties?.address_code ?? buildingCode;
+
+          const addressNumber =
+            Number(feature.properties?.address_number || 0);
+
+          const unitsPerFloor =
+            Number(feature.properties?.units_per_floor || 0);
+
 
           const buildingTypeLower =
             String(buildingType)
@@ -3610,6 +4631,18 @@ function CesiumViewer({
                   centerLon: null,
                   centerLat: null,
                   totalHeight: 0,
+                  bounds: null,
+                  footprintPositions: null,
+                  floors,
+                  unitsPerFloor,
+                  floorHeight,
+                  blockCode,
+                  addressCode,
+                  addressNumber,
+                  buildingCode,
+                  buildingName: feature.name,
+                  buildingType,
+                  parentUlpIn,
                 }
               );
           }
@@ -3718,6 +4751,33 @@ function CesiumViewer({
 
                   validation:
                     "GIS source",
+
+                  blockCode:
+                    blockCode,
+
+                  addressCode:
+                    addressCode,
+
+                  addressNumber:
+                    addressNumber,
+
+                  buildingName:
+                    feature.name,
+
+                  buildingType:
+                    buildingType,
+
+                  floorCount:
+                    floors,
+
+                  unitsPerFloor:
+                    unitsPerFloor,
+
+                  floorHeight:
+                    floorHeight,
+
+                  heightMeters:
+                    totalHeight,
                 },
               });
 
@@ -3725,7 +4785,7 @@ function CesiumViewer({
             registerVisualDefault(
               footprintEntity,
               footprintMaterial,
-              Color.WHITE
+              Color.fromCssColorString("#6f7774").withAlpha(0.34)
             );
 
 
@@ -3867,6 +4927,33 @@ function CesiumViewer({
             // =============================================
 
             const bounds = getGeometryBounds(geometry);
+
+            if (bounds && !buildingVisuals.bounds) {
+              buildingVisuals.bounds = bounds;
+              buildingVisuals.footprintPositions = positions;
+            }
+
+            if (geometryIndex === 0) {
+              spatialObjectsRef.current.push({
+                id: addressCode,
+                category: "building",
+                entity: footprintEntity,
+                propertyId: `GIS-${feature.id}`,
+                parentUlpIn,
+                building: buildingCode,
+                addressCode,
+                blockCode,
+                searchTerms: [
+                  addressCode,
+                  buildingCode,
+                  feature.name,
+                  buildingType,
+                  parentUlpIn,
+                  blockCode ? `Block ${blockCode}` : "",
+                ].filter(Boolean),
+              });
+            }
+
             const podiumFloors = Number(feature.properties?.podium_floors || 0);
             const massingStyle = String(feature.properties?.massing_style || "");
 
@@ -4126,14 +5213,14 @@ function CesiumViewer({
                     isResidentialHouse
                       ? ""
                       : buildingTypeLower.includes("apartment")
-                        ? `${buildingCode} • ${floors}F`
+                        ? `${addressCode} • ${floors}F`
                         : feature.name,
 
 
                   font:
                     buildingTypeLower.includes("apartment")
-                      ? "bold 13px sans-serif"
-                      : "bold 14px sans-serif",
+                      ? "bold 12px sans-serif"
+                      : "bold 13px sans-serif",
 
 
                   style:
@@ -4157,7 +5244,7 @@ function CesiumViewer({
                   distanceDisplayCondition:
                     new DistanceDisplayCondition(
                       0,
-                      buildingTypeLower.includes("apartment") ? 380 : 720
+                      buildingTypeLower.includes("apartment") ? 230 : 380
                     ),
 
                 },
@@ -4186,6 +5273,33 @@ function CesiumViewer({
 
                   validation:
                     "GIS source",
+
+                  blockCode:
+                    blockCode,
+
+                  addressCode:
+                    addressCode,
+
+                  addressNumber:
+                    addressNumber,
+
+                  buildingName:
+                    feature.name,
+
+                  buildingType:
+                    buildingType,
+
+                  floorCount:
+                    floors,
+
+                  unitsPerFloor:
+                    unitsPerFloor,
+
+                  floorHeight:
+                    floorHeight,
+
+                  heightMeters:
+                    totalHeight,
                 },
               });
 
@@ -4480,7 +5594,9 @@ function CesiumViewer({
           !picked ||
           !picked.id
         ) {
-
+          clearSearchSelection();
+          clearBuildingInspection();
+          onSelectRef.current(null);
           return;
         }
 
@@ -4498,12 +5614,32 @@ function CesiumViewer({
           return;
         }
 
+        if (!isAllowedInspectionClick(data)) {
+          return;
+        }
 
         highlightRelationship(
           data,
           picked.id
         );
 
+        const inspectedBuilding = buildingForSelectionData(data);
+
+        if (data.type === "Building Footprint" && inspectedBuilding) {
+          showBuildingFloorInspector(inspectedBuilding);
+        } else if (data.type === "Virtual Floor" && inspectedBuilding) {
+          showBuildingFloorInspector(inspectedBuilding);
+          showFloorUnitInspector(inspectedBuilding, Number(data.floor));
+        } else if (data.type === "Virtual Apartment" && inspectedBuilding) {
+          showBuildingFloorInspector(inspectedBuilding);
+          showFloorUnitInspector(
+            inspectedBuilding,
+            Number(data.floor),
+            unitLetterFromDisplay(data.unit)
+          );
+        } else if (data.type !== "3D Property" && data.type !== "Apartment") {
+          clearBuildingInspection({ restore: false });
+        }
 
         onSelectRef.current(
           data
@@ -4525,6 +5661,21 @@ function CesiumViewer({
         if (!data?.building || data.building === "—") return;
 
         highlightRelationship(data, picked.id);
+
+        const inspectedBuilding = buildingForSelectionData(data);
+        if (inspectedBuilding) {
+          showBuildingFloorInspector(inspectedBuilding);
+          if (data.type === "Virtual Floor") {
+            showFloorUnitInspector(inspectedBuilding, Number(data.floor));
+          } else if (data.type === "Virtual Apartment") {
+            showFloorUnitInspector(
+              inspectedBuilding,
+              Number(data.floor),
+              unitLetterFromDisplay(data.unit)
+            );
+          }
+        }
+
         onSelectRef.current(data);
         focusBuilding(data);
       },
@@ -4535,18 +5686,23 @@ function CesiumViewer({
     handler.setInputAction(
       (movement) => {
 
+        if (!footprintPickingRef.current) {
+          footprintHoverRef.current = null;
+
+          const hovered = viewer.scene.pick(movement.endPosition);
+          const hoveredData = hovered?.id ? getEntityData(hovered.id) : null;
+          const selectable = isAllowedInspectionClick(hoveredData);
+
+          viewer.scene.canvas.style.cursor = selectable ? "pointer" : "default";
+          return;
+        }
+
         if (
-          !footprintPickingRef.current ||
-          footprintModeRef.current
-            !== "polygon" ||
-          footprintCornersRef
-            .current
-            .length === 0
+          footprintModeRef.current !== "polygon" ||
+          footprintCornersRef.current.length === 0
         ) {
-
-          footprintHoverRef.current =
-            null;
-
+          footprintHoverRef.current = null;
+          viewer.scene.canvas.style.cursor = "crosshair";
           return;
         }
 
@@ -4883,6 +6039,10 @@ function CesiumViewer({
     // Leaving a focused building restores the global Earth-fixed camera frame.
     viewer.camera.lookAtTransform(Matrix4.IDENTITY);
 
+    if (["township", "top", "street", "reset"].includes(action)) {
+      clearBuildingInspection();
+    }
+
     if (!bounds) {
       return;
     }
@@ -4922,6 +6082,7 @@ function CesiumViewer({
     }
 
     if (action === "township" || action === "reset") {
+      clearSearchSelection();
       viewer.zoomTo(
         viewer.entities,
         new HeadingPitchRange(
@@ -4946,6 +6107,16 @@ function CesiumViewer({
 
     for (
       const entity
+      of groups.blocks || []
+    ) {
+
+      entity.show =
+        layers.blocks;
+    }
+
+
+    for (
+      const entity
       of groups.parcels
     ) {
 
@@ -4961,6 +6132,14 @@ function CesiumViewer({
 
       entity.show =
         layers.buildings;
+    }
+
+    for (const entity of inspectionFloorEntitiesRef.current) {
+      entity.show = layers.buildings;
+    }
+
+    for (const entity of inspectionUnitEntitiesRef.current) {
+      entity.show = layers.buildings;
     }
 
 
@@ -5067,145 +6246,200 @@ function CesiumViewer({
     layers,
   ]);
 
+  // City View is intentionally presentation-first; Cadastral View makes
+  // legal/spatial boundaries more explicit.  The two modes should not
+  // look like the same map with different checkboxes.
+  useEffect(() => {
+    const cadastral = viewMode === "cadastral";
+
+    for (const { boundary, label, color } of blockVisualsRef.current.values()) {
+      if (boundary?.polygon) {
+        boundary.polygon.material = color.withAlpha(cadastral ? 0.060 : 0.014);
+        boundary.polygon.outlineColor = color.withAlpha(cadastral ? 0.92 : 0.30);
+      }
+      if (label?.label) {
+        label.label.fillColor = Color.WHITE.withAlpha(cadastral ? 0.96 : 0.66);
+        label.label.outlineWidth = cadastral ? 4 : 2;
+      }
+    }
+
+    for (const building of buildingsByKeyRef.current.values()) {
+      const apartmentTower = String(building.buildingType || "")
+        .toLowerCase()
+        .includes("apartment");
+      for (const labelEntity of building.labels || []) {
+        if (!labelEntity?.label) continue;
+        // Apartment address labels belong mainly to technical/cadastral
+        // inspection; civic landmarks stay labelled in both views.
+        labelEntity.label.show = layers.buildings && (cadastral || !apartmentTower);
+      }
+    }
+  }, [viewMode, layers.blocks, layers.buildings]);
+
 
   // ======================================================
-  // SEARCH
+  // UNIFIED CADASTRAL SEARCH / MAP FOCUS
   // ======================================================
 
   useEffect(() => {
+    if (searchTrigger === 0 || !viewerRef.current) return;
 
-    if (
-      searchTrigger === 0 ||
-      !viewerRef.current
-    ) {
+    const viewer = viewerRef.current;
+    clearSearchSelection();
+    clearBuildingInspection();
 
-      return;
-    }
+    const target = searchTarget || null;
 
-
-    const query =
-      searchText
-        .trim()
-        .toLowerCase();
-
-
-    if (
-      !query
-    ) {
-
-      return;
-    }
-
-
-    let result =
-      spatialObjectsRef
-        .current
-        .find(
-          (object) =>
-            object.propertyId
-              ?.toLowerCase() ===
-            query
-        );
-
-
-    if (
-      !result
-    ) {
-
-      result =
-        spatialObjectsRef
-          .current
-          .find(
-            (object) =>
-              object.searchTerms
-                .some(
-                  (term) =>
-                    String(
-                      term
-                    )
-                      .toLowerCase()
-                      .includes(
-                        query
-                      )
-                )
-          );
-    }
-
-
-    if (
-      !result
-    ) {
-
-      onSearchResultRef
-        .current({
-          found: false,
-        });
-
-      return;
-    }
-
-
-    const data =
-      getEntityData(
-        result.entity
-      );
-
-
-    highlightRelationship(
-      data,
-      result.entity
-    );
-
-
-    result.entity.show =
-      true;
-
-
-    viewerRef.current.flyTo(
-      result.entity,
-      {
-        duration:
-          1.4,
-
-        offset:
-          new HeadingPitchRange(
-            CesiumMath.toRadians(
-              35
-            ),
-
-            CesiumMath.toRadians(
-              -30
-            ),
-
-            40
-          ),
-      }
-    );
-
-
-    if (
-      data
-    ) {
-
-      onSelectRef.current(
-        data
-      );
-    }
-
-
-    onSearchResultRef
-      .current({
-        found:
-          true,
-
-        name:
-          result.entity.name,
+    if (target?.target_type === "block") {
+      const found = focusBlock(target.block_code);
+      onSearchResultRef.current({
+        found,
+        name: found ? `Block ${target.block_code}` : "",
+        message: found ? "" : "Block could not be located on the map.",
       });
+      return;
+    }
 
-  }, [
-    searchTrigger,
-    searchText,
-  ]);
+    if (target?.target_type === "plot") {
+      const parcel = parcelsByUlpInRef.current.get(target.parent_ulpin);
+      if (!parcel) {
+        onSearchResultRef.current({ found: false, message: "Plot could not be located on the map." });
+        return;
+      }
+
+      const data = getEntityData(parcel);
+      highlightRelationship(data, parcel);
+      createParcelSelection(target.parent_ulpin);
+      viewer.flyTo(parcel, {
+        duration: 1.2,
+        offset: new HeadingPitchRange(
+          CesiumMath.toRadians(32),
+          CesiumMath.toRadians(-42),
+          115
+        ),
+      });
+      onSearchResultRef.current({ found: true, name: target.title || parcel.name });
+      return;
+    }
+
+    if (["building", "floor", "unit"].includes(target?.target_type)) {
+      const building = buildingsByKeyRef.current.get(
+        getBuildingKey(target.parent_ulpin, target.building_code || target.building)
+      );
+
+      if (!building) {
+        onSearchResultRef.current({ found: false, message: "Building could not be located on the map." });
+        return;
+      }
+
+      const data = {
+        type:
+          target.target_type === "unit"
+            ? "Virtual Apartment"
+            : target.target_type === "floor"
+              ? "Virtual Floor"
+              : "Building Footprint",
+        parentUlpIn: target.parent_ulpin,
+        propertyId: target.spatial_id || target.target_id,
+        building: target.building_code || target.building,
+        floor: target.floor || "—",
+        unit: target.display_unit || target.unit || "—",
+        verticalRange:
+          Number.isFinite(Number(target.z_min)) && Number.isFinite(Number(target.z_max))
+            ? `${target.z_min}m – ${target.z_max}m`
+            : `0m – ${target.height_m || building.totalHeight}m`,
+        validation: target.validation || "Township address index",
+        blockCode: target.block_code || building.blockCode,
+        addressCode: target.address_code || building.addressCode,
+        addressNumber: target.address_number || building.addressNumber,
+        buildingName: target.building_name || building.buildingName,
+        buildingType: target.building_type || building.buildingType,
+        floorCount: Number(target.floors || building.floors || 0),
+        unitsPerFloor: Number(target.units_per_floor || building.unitsPerFloor || 0),
+        floorHeight: Number(target.floor_height || building.floorHeight || 0),
+        heightMeters: Number(target.height_m || building.totalHeight || 0),
+      };
+
+      highlightRelationship(data, building.footprints?.[0] || null);
+      createParcelSelection(target.parent_ulpin);
+
+      // Search and mouse interaction share the same temporary inspector.
+      // A building result exposes floors; a floor result exposes its units;
+      // a unit result exposes the floor and highlights the requested unit.
+      showBuildingFloorInspector(building);
+
+      if (target.target_type === "floor") {
+        showFloorUnitInspector(building, Number(target.floor));
+      } else if (target.target_type === "unit") {
+        showFloorUnitInspector(
+          building,
+          Number(target.floor),
+          String(target.unit || "").toUpperCase()
+        );
+      }
+
+      const totalHeight = Math.max(6, Number(building.totalHeight || target.height_m || 12));
+      const targetHeight = target.target_type === "unit" || target.target_type === "floor"
+        ? Math.max(2, Number(target.z_min || 0) + Number(target.floor_height || building.floorHeight || 3.2) * 0.5)
+        : totalHeight * 0.35;
+
+      viewer.camera.lookAt(
+        Cartesian3.fromDegrees(building.centerLon, building.centerLat, targetHeight),
+        new HeadingPitchRange(
+          CesiumMath.toRadians(35),
+          CesiumMath.toRadians(-20),
+          target.target_type === "unit"
+            ? Math.max(34, totalHeight * 1.15)
+            : target.target_type === "floor"
+              ? Math.max(42, totalHeight * 1.45)
+              : Math.max(45, totalHeight * 3.2)
+        )
+      );
+
+      onSelectRef.current(data);
+      onSearchResultRef.current({
+        found: true,
+        name: target.title || target.address_code || building.buildingName,
+      });
+      return;
+    }
+
+    // Legacy property fallback for the original 3D property workflow.
+    const query = searchText.trim().toLowerCase();
+    if (!query) return;
+
+    let result = spatialObjectsRef.current.find(
+      (object) => object.propertyId?.toLowerCase() === query
+    );
+
+    if (!result) {
+      result = spatialObjectsRef.current.find((object) =>
+        object.searchTerms.some((term) =>
+          String(term).toLowerCase().includes(query)
+        )
+      );
+    }
+
+    if (!result) {
+      onSearchResultRef.current({ found: false, message: "Map target not found." });
+      return;
+    }
+
+    const data = getEntityData(result.entity);
+    highlightRelationship(data, result.entity);
+
+    viewer.flyTo(result.entity, {
+      duration: 1.3,
+      offset: new HeadingPitchRange(
+        CesiumMath.toRadians(35),
+        CesiumMath.toRadians(-30),
+        data?.type === "Land Parcel" ? 110 : 55
+      ),
+    });
+
+    if (data) onSelectRef.current(data);
+    onSearchResultRef.current({ found: true, name: result.entity.name });
+  }, [searchTrigger, searchText, searchTarget]);
 
 
   // ======================================================
@@ -5574,6 +6808,25 @@ function CesiumViewer({
   ]);
 
 
+
+
+  // ======================================================
+  // CLEAR CADASTRAL INSPECTION WITHOUT RESETTING CAMERA
+  // ======================================================
+
+  useEffect(() => {
+    if (selectionClearTrigger === 0) return;
+
+    clearSearchSelection();
+    clearBuildingInspection();
+    restoreVisuals();
+
+    if (viewerRef.current) {
+      viewerRef.current.scene.canvas.style.cursor = "default";
+    }
+  }, [selectionClearTrigger]);
+
+
   // ======================================================
   // RESET VALIDATION
   // ======================================================
@@ -5598,6 +6851,8 @@ function CesiumViewer({
         [];
 
 
+    clearBuildingInspection();
+    clearSearchSelection();
     restoreVisuals();
 
 

@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import re
 
 import psycopg
 
@@ -49,7 +50,7 @@ app = FastAPI(
         "Backend API for the Bhumi3D "
         "3D ULPIN and Vertical Property Mapping System"
     ),
-    version="1.3.5",
+    version="1.3.7B.1",
 )
 
 
@@ -80,6 +81,124 @@ def get_connection():
     return psycopg.connect(
         **DB_CONFIG
     )
+
+
+def ensure_township_address_table(cursor):
+    """Persistent lightweight address index for Township V3.
+
+    One row represents one cadastral parcel. Occupied parcels are enriched
+    with building metadata; apartment units are derived virtually at search
+    time so Cesium does not need thousands of permanent unit entities.
+    """
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS township_addresses (
+            id SERIAL PRIMARY KEY,
+            parent_ulpin VARCHAR(50) UNIQUE NOT NULL,
+            plot_name VARCHAR(150) NOT NULL,
+            block_code VARCHAR(1) NOT NULL,
+            address_number INTEGER NOT NULL,
+            address_code VARCHAR(20) NOT NULL,
+            row_index INTEGER NOT NULL,
+            column_index INTEGER NOT NULL,
+            land_use VARCHAR(50) NOT NULL,
+            building_feature_id INTEGER,
+            building_code VARCHAR(50),
+            building_name VARCHAR(150),
+            building_type VARCHAR(80),
+            floors INTEGER DEFAULT 0,
+            units_per_floor INTEGER DEFAULT 0,
+            floor_height DOUBLE PRECISION DEFAULT 0,
+            height_m DOUBLE PRECISION DEFAULT 0,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS township_addresses_block_number_idx
+        ON township_addresses (block_code, address_number);
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS township_addresses_building_code_idx
+        ON township_addresses (building_code);
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS township_addresses_address_code_uidx
+        ON township_addresses (address_code);
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS township_addresses_grid_cell_uidx
+        ON township_addresses (row_index, column_index);
+        """
+    )
+
+
+def ensure_township_units_table(cursor):
+    """Persist every apartment as an addressable 3D cadastral unit."""
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS township_units (
+            id BIGSERIAL PRIMARY KEY,
+            parent_ulpin VARCHAR(50) NOT NULL,
+            block_code VARCHAR(1) NOT NULL,
+            address_code VARCHAR(20) NOT NULL,
+            building_code VARCHAR(50) NOT NULL,
+            floor_number INTEGER NOT NULL,
+            floor_id VARCHAR(180) NOT NULL,
+            unit_letter VARCHAR(4) NOT NULL,
+            display_unit VARCHAR(20) NOT NULL,
+            proposed_3d_ulpin VARCHAR(220) UNIQUE NOT NULL,
+            z_min DOUBLE PRECISION NOT NULL,
+            z_max DOUBLE PRECISION NOT NULL,
+            validation VARCHAR(50) DEFAULT 'Valid',
+            footprint GEOMETRY(Polygon, 4326) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (address_code, floor_number, unit_letter)
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS township_units_address_idx
+        ON township_units (address_code, floor_number, unit_letter);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS township_units_parent_idx
+        ON township_units (parent_ulpin);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS township_units_footprint_gix
+        ON township_units USING GIST (footprint);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS township_units_3d_ulpin_upper_idx
+        ON township_units (UPPER(proposed_3d_ulpin));
+        """
+    )
+
+
+def _floor_spatial_id(parent_ulpin, address_code, floor_number):
+    compact_address = address_code.replace("-", "")
+    return f"{parent_ulpin}-{compact_address}-F{int(floor_number):02d}"
 
 
 # =========================================================
@@ -182,7 +301,7 @@ def home():
         "message": "Bhumi3D API is running",
         "status": "success",
         "database": "PostgreSQL + PostGIS",
-        "version": "1.3.5",
+        "version": "1.3.7B",
     }
 
 
@@ -338,83 +457,657 @@ def get_property(unit: str):
 
 
 # =========================================================
-# SEARCH PROPERTIES
+# UNIFIED CADASTRAL / TOWNSHIP SEARCH
 # =========================================================
 
+def _address_row_to_result(row, result_type="building"):
+    (
+        parent_ulpin,
+        plot_name,
+        block_code,
+        address_number,
+        address_code,
+        land_use,
+        building_feature_id,
+        building_code,
+        building_name,
+        building_type,
+        floors,
+        units_per_floor,
+        floor_height,
+        height_m,
+    ) = row
+
+    return {
+        "result_type": result_type,
+        "target_type": result_type,
+        "target_id": (
+            f"{result_type}:{address_code}"
+            if result_type != "plot"
+            else f"plot:{parent_ulpin}"
+        ),
+        "title": address_code if result_type == "building" else plot_name,
+        "subtitle": (
+            f"Block {block_code} · {building_type or land_use.replace('_', ' ').title()}"
+        ),
+        "block_code": block_code,
+        "address_number": address_number,
+        "address_code": address_code,
+        "parent_ulpin": parent_ulpin,
+        "plot_name": plot_name,
+        "land_use": land_use,
+        "feature_id": building_feature_id,
+        "building_code": building_code,
+        "building": building_code,
+        "building_name": building_name,
+        "building_type": building_type,
+        "floors": int(floors or 0),
+        "units_per_floor": int(units_per_floor or 0),
+        "floor_height": float(floor_height or 0),
+        "height_m": float(height_m or 0),
+        "legacy_code": building_code,
+        "floor": None,
+        "unit": None,
+        "display_unit": None,
+        "property_id": None,
+        "spatial_id": None,
+        "validation": "Township address index",
+    }
+
+
+def _unit_letter_index(letter):
+    if not letter:
+        return 0
+    value = ord(letter.upper()) - ord("A") + 1
+    return value if value > 0 else 0
+
+
+def _unit_spatial_id(parent_ulpin, address_code, floor_number, unit_letter):
+    compact_address = address_code.replace("-", "")
+    return (
+        f"{parent_ulpin}-{compact_address}-"
+        f"F{int(floor_number):02d}-U{unit_letter.upper()}"
+    )
+
+
 @app.get("/search")
-def search_properties(q: str):
+def search_properties(q: str, limit: int = 16):
+    query = (q or "").strip()
+    if not query:
+        return {
+            "found": False,
+            "count": 0,
+            "results": [],
+            "message": "Type a block address, building number, ULPIN, building name, floor or apartment.",
+        }
 
-    search_value = f"%{q}%"
+    limit = max(1, min(int(limit or 16), 50))
+    normalized = re.sub(r"\s+", " ", query.upper()).strip()
+    compact = re.sub(r"[^A-Z0-9]", "", normalized)
 
+    address_columns = """
+        parent_ulpin,
+        plot_name,
+        block_code,
+        address_number,
+        address_code,
+        land_use,
+        building_feature_id,
+        building_code,
+        building_name,
+        building_type,
+        floors,
+        units_per_floor,
+        floor_height,
+        height_m
+    """
+
+    results = []
+    message = ""
 
     with get_connection() as connection:
-
         with connection.cursor() as cursor:
+            ensure_township_address_table(cursor)
+            ensure_township_units_table(cursor)
 
+            # -------------------------------------------------
+            # BLOCK SEARCH: "Block A" / "A block"
+            # -------------------------------------------------
+            block_match = re.fullmatch(r"(?:BLOCK\s*)?([ABCD])(?:\s*BLOCK)?", normalized)
+            if block_match and ("BLOCK" in normalized or len(normalized) == 1):
+                block_code = block_match.group(1)
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(*),
+                        COUNT(*) FILTER (WHERE building_code IS NOT NULL),
+                        COALESCE(SUM(floors), 0),
+                        COALESCE(SUM(
+                            CASE WHEN building_type ILIKE '%%Apartment%%'
+                            THEN floors * units_per_floor ELSE 0 END
+                        ), 0)
+                    FROM township_addresses
+                    WHERE block_code = %s;
+                    """,
+                    (block_code,),
+                )
+                stats = cursor.fetchone()
+                if stats and stats[0] > 0:
+                    results.append({
+                        "result_type": "block",
+                        "target_type": "block",
+                        "target_id": f"block:{block_code}",
+                        "title": f"Block {block_code}",
+                        "subtitle": f"{stats[0]} plots · {stats[1]} buildings · {stats[2]} floors",
+                        "block_code": block_code,
+                        "plot_count": stats[0],
+                        "building_count": stats[1],
+                        "floor_count": stats[2],
+                        "apartment_capacity": stats[3],
+                        "parent_ulpin": None,
+                        "building_code": None,
+                        "building": "—",
+                        "floor": None,
+                        "unit": None,
+                        "property_id": None,
+                    })
+                    return {
+                        "found": True,
+                        "count": 1,
+                        "results": results,
+                        "message": f"Block {block_code} overview.",
+                    }
+
+            # -------------------------------------------------
+            # BUILDING + UNIT: A-12 17-C / A12/17C
+            # Resolve from the persisted PostGIS registry so every search
+            # and mouse path exposes the exact same apartment 3D ULPIN.
+            # -------------------------------------------------
+            unit_match = re.fullmatch(
+                r"([ABCD])\s*-?\s*(\d{1,3})\s*(?:/|\s)+\s*(\d{1,2})\s*-?\s*([A-Z])",
+                normalized,
+            )
+            if unit_match:
+                block_code, number_text, floor_text, unit_letter = unit_match.groups()
+                address_code = f"{block_code}-{int(number_text)}"
+                floor_number = int(floor_text)
+                cursor.execute(
+                    """
+                    SELECT
+                        a.parent_ulpin, a.plot_name, a.block_code, a.address_number,
+                        a.address_code, a.land_use, a.building_feature_id, a.building_code,
+                        a.building_name, a.building_type, a.floors, a.units_per_floor,
+                        a.floor_height, a.height_m,
+                        u.floor_number, u.floor_id, u.unit_letter, u.display_unit,
+                        u.proposed_3d_ulpin, u.z_min, u.z_max, u.validation
+                    FROM township_units AS u
+                    JOIN township_addresses AS a ON a.address_code = u.address_code
+                    WHERE UPPER(u.address_code) = %s
+                      AND u.floor_number = %s
+                      AND UPPER(u.unit_letter) = %s
+                    LIMIT 1;
+                    """,
+                    (address_code.upper(), floor_number, unit_letter.upper()),
+                )
+                unit_row = cursor.fetchone()
+                if unit_row:
+                    base = _address_row_to_result(unit_row[:14])
+                    base.update({
+                        "result_type": "unit",
+                        "target_type": "unit",
+                        "target_id": f"unit:{base['address_code']}:{unit_row[14]}:{unit_row[16]}",
+                        "title": f"{base['address_code']} · {unit_row[17]}",
+                        "subtitle": f"Registered 3D unit · Floor {unit_row[14]} · Apartment {unit_row[16]}",
+                        "floor": str(unit_row[14]),
+                        "floor_id": unit_row[15],
+                        "unit": unit_row[16],
+                        "display_unit": unit_row[17],
+                        "property_id": unit_row[18],
+                        "spatial_id": unit_row[18],
+                        "z_min": unit_row[19],
+                        "z_max": unit_row[20],
+                        "validation": unit_row[21],
+                        "registry_status": "Persisted in PostGIS",
+                    })
+                    return {
+                        "found": True,
+                        "count": 1,
+                        "results": [base],
+                        "message": f"Apartment {unit_row[17]} in {base['address_code']}.",
+                    }
+
+            # -------------------------------------------------
+            # BUILDING + FLOOR: A-12 F17 / A-12 FLOOR 17
+            # -------------------------------------------------
+            floor_match = re.fullmatch(
+                r"([ABCD])\s*-?\s*(\d{1,3})\s*(?:/|\s)+(?:F|FLOOR\s*)?(\d{1,2})",
+                normalized,
+            )
+            if floor_match:
+                block_code, number_text, floor_text = floor_match.groups()
+                address_number = int(number_text)
+                floor_number = int(floor_text)
+                cursor.execute(
+                    f"""
+                    SELECT {address_columns}
+                    FROM township_addresses
+                    WHERE block_code = %s
+                      AND address_number = %s
+                      AND building_code IS NOT NULL
+                    LIMIT 1;
+                    """,
+                    (block_code, address_number),
+                )
+                row = cursor.fetchone()
+                if row:
+                    base = _address_row_to_result(row)
+                    if 1 <= floor_number <= base["floors"]:
+                        base.update({
+                            "result_type": "floor",
+                            "target_type": "floor",
+                            "target_id": f"floor:{base['address_code']}:{floor_number}",
+                            "title": f"{base['address_code']} · Floor {floor_number}",
+                            "subtitle": f"{base['units_per_floor']} apartments · Block {block_code}",
+                            "floor": str(floor_number),
+                            "z_min": round((floor_number - 1) * base["floor_height"], 2),
+                            "z_max": round(floor_number * base["floor_height"], 2),
+                        })
+                        return {
+                            "found": True,
+                            "count": 1,
+                            "results": [base],
+                            "message": f"Floor {floor_number} in {base['address_code']}.",
+                        }
+
+            # -------------------------------------------------
+            # UNIT ONLY: 17-C (ambiguous across towers)
+            # -------------------------------------------------
+            unit_only_match = re.fullmatch(r"(\d{1,2})\s*-\s*([A-Z])", normalized)
+            if unit_only_match:
+                floor_number = int(unit_only_match.group(1))
+                unit_letter = unit_only_match.group(2)
+                unit_index = _unit_letter_index(unit_letter)
+                cursor.execute(
+                    f"""
+                    SELECT {address_columns}
+                    FROM township_addresses
+                    WHERE building_type ILIKE '%%Apartment%%'
+                      AND floors >= %s
+                      AND units_per_floor >= %s
+                    ORDER BY block_code, address_number
+                    LIMIT %s;
+                    """,
+                    (floor_number, unit_index, limit),
+                )
+                rows = cursor.fetchall()
+                for row in rows:
+                    base = _address_row_to_result(row)
+                    display_unit = f"{floor_number}-{unit_letter}"
+                    spatial_id = _unit_spatial_id(
+                        base["parent_ulpin"], base["address_code"], floor_number, unit_letter
+                    )
+                    base.update({
+                        "result_type": "unit",
+                        "target_type": "unit",
+                        "target_id": f"unit:{base['address_code']}:{floor_number}:{unit_letter}",
+                        "title": f"{base['address_code']} · {display_unit}",
+                        "subtitle": f"Floor {floor_number} · Apartment {unit_letter}",
+                        "floor": str(floor_number),
+                        "unit": unit_letter,
+                        "display_unit": display_unit,
+                        "property_id": spatial_id,
+                        "spatial_id": spatial_id,
+                        "z_min": round((floor_number - 1) * base["floor_height"], 2),
+                        "z_max": round(floor_number * base["floor_height"], 2),
+                    })
+                    results.append(base)
+                if results:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM township_addresses
+                        WHERE building_type ILIKE '%%Apartment%%'
+                          AND floors >= %s
+                          AND units_per_floor >= %s;
+                        """,
+                        (floor_number, unit_index),
+                    )
+                    total = cursor.fetchone()[0]
+                    message = (
+                        f"{floor_number}-{unit_letter} exists in {total} apartment towers. "
+                        "Choose a building or search like A-12 17-C."
+                    )
+                    return {
+                        "found": True,
+                        "count": total,
+                        "results": results,
+                        "message": message,
+                        "truncated": total > len(results),
+                    }
+
+            # -------------------------------------------------
+            # NUMERIC BUILDING NUMBER: 12 -> A-12/B-12/C-12/D-12
+            # -------------------------------------------------
+            if re.fullmatch(r"\d{1,3}", normalized):
+                address_number = int(normalized)
+                cursor.execute(
+                    f"""
+                    SELECT {address_columns}
+                    FROM township_addresses
+                    WHERE address_number = %s
+                      AND building_code IS NOT NULL
+                    ORDER BY block_code;
+                    """,
+                    (address_number,),
+                )
+                rows = cursor.fetchall()
+                results = [_address_row_to_result(row) for row in rows]
+                if results:
+                    return {
+                        "found": True,
+                        "count": len(results),
+                        "results": results,
+                        "message": f"Building {address_number} across the township blocks.",
+                    }
+
+                cursor.execute(
+                    """
+                    SELECT block_code, MAX(address_number)
+                    FROM township_addresses
+                    WHERE building_code IS NOT NULL
+                    GROUP BY block_code
+                    ORDER BY block_code;
+                    """
+                )
+                ranges = ", ".join(
+                    f"{block}-{maximum}" for block, maximum in cursor.fetchall()
+                )
+                message = (
+                    f"Building number {address_number} is not assigned. "
+                    f"Current block ranges end at {ranges}."
+                )
+
+            # -------------------------------------------------
+            # EXACT BLOCK ADDRESS: A-12 / A12
+            # -------------------------------------------------
+            address_match = re.fullmatch(r"([ABCD])\s*-?\s*(\d{1,3})", normalized)
+            if address_match:
+                block_code, number_text = address_match.groups()
+                address_number = int(number_text)
+                cursor.execute(
+                    f"""
+                    SELECT {address_columns}
+                    FROM township_addresses
+                    WHERE block_code = %s
+                      AND address_number = %s
+                    LIMIT 1;
+                    """,
+                    (block_code, address_number),
+                )
+                row = cursor.fetchone()
+                if row:
+                    result_type = "building" if row[7] else "plot"
+                    result = _address_row_to_result(row, result_type=result_type)
+                    if result_type == "plot":
+                        result["title"] = f"Plot {result['address_code']}"
+                    return {
+                        "found": True,
+                        "count": 1,
+                        "results": [result],
+                        "message": f"{result['address_code']} located in Block {block_code}.",
+                    }
+
+            # -------------------------------------------------
+            # EXACT PROPOSED 3D ULPIN (APARTMENT)
+            # -------------------------------------------------
             cursor.execute(
                 """
                 SELECT
-                    property_type,
-                    parent_ulpin,
-                    property_id,
-                    building,
-                    floor,
-                    unit,
-                    z_min,
-                    z_max,
-                    validation
+                    a.parent_ulpin, a.plot_name, a.block_code, a.address_number,
+                    a.address_code, a.land_use, a.building_feature_id, a.building_code,
+                    a.building_name, a.building_type, a.floors, a.units_per_floor,
+                    a.floor_height, a.height_m,
+                    u.floor_number, u.floor_id, u.unit_letter, u.display_unit,
+                    u.proposed_3d_ulpin, u.z_min, u.z_max, u.validation
+                FROM township_units AS u
+                JOIN township_addresses AS a
+                  ON a.address_code = u.address_code
+                WHERE UPPER(u.proposed_3d_ulpin) = %s
+                LIMIT 1;
+                """,
+                (normalized,),
+            )
+            unit_row = cursor.fetchone()
+            if unit_row:
+                base = _address_row_to_result(unit_row[:14])
+                base.update({
+                    "result_type": "unit",
+                    "target_type": "unit",
+                    "target_id": f"unit:{base['address_code']}:{unit_row[14]}:{unit_row[16]}",
+                    "title": f"{base['address_code']} · {unit_row[17]}",
+                    "subtitle": f"Registered 3D unit · Floor {unit_row[14]} · Apartment {unit_row[16]}",
+                    "floor": str(unit_row[14]),
+                    "floor_id": unit_row[15],
+                    "unit": unit_row[16],
+                    "display_unit": unit_row[17],
+                    "property_id": unit_row[18],
+                    "spatial_id": unit_row[18],
+                    "z_min": unit_row[19],
+                    "z_max": unit_row[20],
+                    "validation": unit_row[21],
+                })
+                return {
+                    "found": True,
+                    "count": 1,
+                    "results": [base],
+                    "message": "Exact registered 3D apartment found.",
+                }
 
-                FROM properties
+            # -------------------------------------------------
+            # EXACT PARENT 2D ULPIN
+            # -------------------------------------------------
+            cursor.execute(
+                f"""
+                SELECT {address_columns}
+                FROM township_addresses
+                WHERE UPPER(parent_ulpin) = %s
+                LIMIT 1;
+                """,
+                (normalized,),
+            )
+            row = cursor.fetchone()
+            if row:
+                result = _address_row_to_result(row, result_type="plot")
+                result["title"] = f"Plot {result['address_code']}"
+                return {
+                    "found": True,
+                    "count": 1,
+                    "results": [result],
+                    "message": f"Exact cadastral parcel {normalized}.",
+                }
 
-                WHERE
-                    property_id ILIKE %s
-
-                    OR unit ILIKE %s
-
+            # -------------------------------------------------
+            # GENERAL TOWNSHIP SEARCH WITH RANKING
+            # -------------------------------------------------
+            alias_terms = {
+                "MARKET SQUARE": "shopping",
+                "TOWN CENTRE": "shopping",
+                "FITNESS CENTRE": "gym",
+                "FITNESS CENTER": "gym",
+                "ADMIN": "office",
+                "ADMINISTRATION": "office",
+                "CLUB": "clubhouse",
+            }
+            effective_query = alias_terms.get(normalized, query)
+            like_value = f"%{effective_query}%"
+            prefix_value = f"{effective_query}%"
+            cursor.execute(
+                f"""
+                SELECT {address_columns}
+                FROM township_addresses
+                WHERE building_code IS NOT NULL
+                  AND (
+                    building_code ILIKE %s
+                    OR building_name ILIKE %s
+                    OR building_type ILIKE %s
+                    OR plot_name ILIKE %s
+                    OR land_use ILIKE %s
+                    OR address_code ILIKE %s
                     OR parent_ulpin ILIKE %s
-
-                    OR property_type ILIKE %s
-
-                    OR building ILIKE %s
-
-                ORDER BY id;
+                  )
+                ORDER BY
+                    CASE
+                      WHEN UPPER(building_code) = %s THEN 0
+                      WHEN UPPER(address_code) = %s THEN 1
+                      WHEN building_name ILIKE %s THEN 2
+                      WHEN building_code ILIKE %s THEN 3
+                      WHEN address_code ILIKE %s THEN 4
+                      ELSE 5
+                    END,
+                    block_code,
+                    address_number
+                LIMIT %s;
                 """,
                 (
-                    search_value,
-                    search_value,
-                    search_value,
-                    search_value,
-                    search_value,
+                    like_value, like_value, like_value, like_value,
+                    like_value, like_value, like_value,
+                    normalized, normalized,
+                    prefix_value, prefix_value, prefix_value,
+                    limit,
                 ),
             )
-
             rows = cursor.fetchall()
+            results = [_address_row_to_result(row) for row in rows]
 
+            # -------------------------------------------------
+            # LEGACY 3D PROPERTY SEARCH (kept for non-township data)
+            # -------------------------------------------------
+            if len(results) < limit:
+                remaining = limit - len(results)
+                cursor.execute(
+                    """
+                    SELECT
+                        property_type,
+                        parent_ulpin,
+                        property_id,
+                        building,
+                        floor,
+                        unit,
+                        z_min,
+                        z_max,
+                        validation
+                    FROM properties
+                    WHERE property_id ILIKE %s
+                       OR unit ILIKE %s
+                       OR parent_ulpin ILIKE %s
+                       OR property_type ILIKE %s
+                       OR building ILIKE %s
+                    ORDER BY id
+                    LIMIT %s;
+                    """,
+                    (like_value, like_value, like_value, like_value, like_value, remaining),
+                )
+                for row in cursor.fetchall():
+                    results.append({
+                        "result_type": "property",
+                        "target_type": "property",
+                        "target_id": f"property:{row[2]}",
+                        "title": row[2],
+                        "subtitle": f"{row[0]} · {row[3]} · Floor {row[4]}",
+                        "type": row[0],
+                        "parent_ulpin": row[1],
+                        "property_id": row[2],
+                        "building": row[3],
+                        "building_code": row[3],
+                        "floor": row[4],
+                        "unit": row[5],
+                        "z_min": row[6],
+                        "z_max": row[7],
+                        "validation": row[8],
+                    })
 
-    results = []
-
-
-    for row in rows:
-
-        results.append(
-            {
-                "type": row[0],
-                "parent_ulpin": row[1],
-                "property_id": row[2],
-                "building": row[3],
-                "floor": row[4],
-                "unit": row[5],
-                "z_min": row[6],
-                "z_max": row[7],
-                "validation": row[8],
-            }
-        )
-
+    if results:
+        if not message:
+            message = f"{len(results)} matching cadastral result(s)."
+        return {
+            "found": True,
+            "count": len(results),
+            "results": results,
+            "message": message,
+        }
 
     return {
-        "found": len(results) > 0,
-        "count": len(results),
-        "results": results,
+        "found": False,
+        "count": 0,
+        "results": [],
+        "message": message or "No matching block, plot, building, floor or apartment found.",
+    }
+
+
+# =========================================================
+# TOWNSHIP UNIT REGISTRY LOOKUP
+# =========================================================
+
+@app.get("/township/units/{address_code}/{floor_number}/{unit_letter}")
+def get_township_unit(address_code: str, floor_number: int, unit_letter: str):
+    address_code = (address_code or "").strip().upper()
+    unit_letter = (unit_letter or "").strip().upper()
+
+    if not re.fullmatch(r"[ABCD]-\d{1,3}", address_code):
+        raise HTTPException(status_code=400, detail="Invalid township building address")
+    if floor_number < 1 or not re.fullmatch(r"[A-Z]", unit_letter):
+        raise HTTPException(status_code=400, detail="Invalid floor or apartment letter")
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            ensure_township_address_table(cursor)
+            ensure_township_units_table(cursor)
+            cursor.execute(
+                """
+                SELECT
+                    a.parent_ulpin, a.plot_name, a.block_code, a.address_number,
+                    a.address_code, a.building_code, a.building_name, a.building_type,
+                    a.floors, a.units_per_floor, a.floor_height, a.height_m,
+                    u.floor_number, u.floor_id, u.unit_letter, u.display_unit,
+                    u.proposed_3d_ulpin, u.z_min, u.z_max, u.validation
+                FROM township_units AS u
+                JOIN township_addresses AS a ON a.address_code = u.address_code
+                WHERE UPPER(u.address_code) = %s
+                  AND u.floor_number = %s
+                  AND UPPER(u.unit_letter) = %s
+                LIMIT 1;
+                """,
+                (address_code, floor_number, unit_letter),
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Registered township apartment not found")
+
+    return {
+        "found": True,
+        "parent_ulpin": row[0],
+        "plot_name": row[1],
+        "block_code": row[2],
+        "address_number": row[3],
+        "address_code": row[4],
+        "building_code": row[5],
+        "building_name": row[6],
+        "building_type": row[7],
+        "floors": row[8],
+        "units_per_floor": row[9],
+        "floor_height": row[10],
+        "height_m": row[11],
+        "floor": str(row[12]),
+        "floor_id": row[13],
+        "unit": row[14],
+        "display_unit": row[15],
+        "proposed_3d_ulpin": row[16],
+        "spatial_id": row[16],
+        "z_min": row[17],
+        "z_max": row[18],
+        "validation": row[19],
+        "registry_status": "Persisted in PostGIS",
     }
 
 
@@ -631,6 +1324,9 @@ def get_scene():
 
         with connection.cursor() as cursor:
 
+            ensure_township_address_table(cursor)
+            ensure_township_units_table(cursor)
+
             # -------------------------------------
             # PARCELS
             # -------------------------------------
@@ -638,13 +1334,19 @@ def get_scene():
             cursor.execute(
                 """
                 SELECT
-                    ulpin,
-                    name,
-                    ST_AsGeoJSON(geometry)
+                    p.ulpin,
+                    p.name,
+                    ST_AsGeoJSON(p.geometry),
+                    a.block_code,
+                    a.address_number,
+                    a.address_code,
+                    a.land_use
 
-                FROM parcels
+                FROM parcels AS p
+                LEFT JOIN township_addresses AS a
+                    ON a.parent_ulpin = p.ulpin
 
-                ORDER BY id;
+                ORDER BY p.id;
                 """
             )
 
@@ -667,6 +1369,10 @@ def get_scene():
                             if row[2]
                             else None
                         ),
+                        "block_code": row[3],
+                        "address_number": row[4],
+                        "address_code": row[5],
+                        "land_use": row[6],
                     }
                 )
 
@@ -727,9 +1433,25 @@ def get_scene():
                 )
 
 
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS registered_units,
+                    COUNT(DISTINCT proposed_3d_ulpin) AS unique_3d_ulpins
+                FROM township_units;
+                """
+            )
+            registry_counts = cursor.fetchone()
+            registered_unit_count = int(registry_counts[0] or 0)
+            unique_3d_ulpin_count = int(registry_counts[1] or 0)
+
+
     return {
         "parcel_count": len(parcels),
         "property_count": len(properties),
+        "registered_unit_count": registered_unit_count,
+        "unique_3d_ulpin_count": unique_3d_ulpin_count,
+        "registry_integrity_ok": registered_unit_count == unique_3d_ulpin_count,
         "parcels": parcels,
         "properties": properties,
     }
@@ -1438,10 +2160,10 @@ def generate_demo_colony():
 
     """
     Replace the small development demo with the deterministic
-    Bhumi3D Township V3 Step 3.5 dataset.
+    Bhumi3D Township V3 Step 3.6 dataset.
 
-    Step 3.5 keeps the Step 3.4 architecture and 150-plot cadastral
-    foundation, then adds mobility and public-realm realism while
+    Step 3.6 keeps the Step 3.5 mobility system and 150-plot cadastral
+    foundation, then polishes vehicle proportions, transit furniture and signage while
     preserving the Step 2.1 road/camera work and the Step 3.2
     City/Cadastral presentation modes:
     - 150 cadastral plots
@@ -1478,6 +2200,9 @@ def generate_demo_colony():
     - CadastraX3D township shuttle buses and four bus shelters
     - EV charging pedestals in common parking areas
     - close-range district / destination wayfinding signs
+    - layered vehicle profiles with body/cabin/window/wheel metadata
+    - refined bus-shelter dimensions and safer sign offsets
+    - compact road/district sign categories for cleaner close-range rendering
 
     Individual apartment ownership volumes remain intentionally
     deferred so the township overview stays lightweight.
@@ -1613,6 +2338,53 @@ def generate_demo_colony():
 
     township_max_lat = current_y
 
+    # -----------------------------------------------------
+    # FOUR-BLOCK CADASTRAL ADDRESSING
+    # -----------------------------------------------------
+
+    addressable_land_uses = {
+        "apartment", "residential", "school", "hospital", "gym",
+        "shopping", "office", "clubhouse", "security", "utility",
+        "water_service", "community_center", "daycare",
+    }
+
+    def land_use_for_cell(cell):
+        if cell in apartment_cells:
+            return "apartment"
+        if cell in amenity_cells:
+            return amenity_cells[cell]
+        return "residential"
+
+    def block_for_cell(row_index, column_index):
+        north = row_index >= rows // 2
+        west = column_index <= 6
+        if north and west:
+            return "A"
+        if north and not west:
+            return "B"
+        if not north and west:
+            return "C"
+        return "D"
+
+    # Number occupied plots first inside each block. This guarantees common
+    # building numbers (1, 2, 3...) exist across A/B/C/D whenever possible,
+    # so a numeric query such as "12" naturally returns A-12/B-12/C-12/D-12.
+    block_address_numbers = {}
+    for block_code in ("A", "B", "C", "D"):
+        cells = [
+            (row_index, column_index)
+            for row_index in range(rows)
+            for column_index in range(columns)
+            if block_for_cell(row_index, column_index) == block_code
+        ]
+        occupied = [
+            cell for cell in cells
+            if land_use_for_cell(cell) in addressable_land_uses
+        ]
+        open_space = [cell for cell in cells if cell not in occupied]
+        for address_number, cell in enumerate([*occupied, *open_space], start=1):
+            block_address_numbers[cell] = address_number
+
     plots = []
 
     apartment_index = 0
@@ -1629,10 +2401,16 @@ def generate_demo_colony():
             with connection.cursor() as cursor:
 
                 ensure_colony_assets_table(cursor)
+                ensure_township_address_table(cursor)
+                ensure_township_units_table(cursor)
 
                 # -----------------------------------------
                 # RESET CURRENT DEMO DATA
                 # -----------------------------------------
+
+                cursor.execute(
+                    "TRUNCATE TABLE township_units RESTART IDENTITY;"
+                )
 
                 cursor.execute(
                     "TRUNCATE TABLE properties RESTART IDENTITY;"
@@ -1650,6 +2428,10 @@ def generate_demo_colony():
                     "TRUNCATE TABLE colony_assets RESTART IDENTITY;"
                 )
 
+                cursor.execute(
+                    "TRUNCATE TABLE township_addresses RESTART IDENTITY;"
+                )
+
                 # -----------------------------------------
                 # 150 CADASTRAL PARCELS + ZONING
                 # -----------------------------------------
@@ -1663,12 +2445,10 @@ def generate_demo_colony():
                         parcel_number += 1
                         cell = (row_index, column_index)
 
-                        if cell in apartment_cells:
-                            land_use = "apartment"
-                        elif cell in amenity_cells:
-                            land_use = amenity_cells[cell]
-                        else:
-                            land_use = "residential"
+                        land_use = land_use_for_cell(cell)
+                        block_code = block_for_cell(row_index, column_index)
+                        address_number = block_address_numbers[cell]
+                        address_code = f"{block_code}-{address_number}"
 
                         min_lon = x_starts[column_index]
                         min_lat = y_starts[row_index]
@@ -1679,39 +2459,27 @@ def generate_demo_colony():
 
                         if land_use == "apartment":
                             apartment_index += 1
-                            display_name = (
-                                f"Apartment Plot A{apartment_index:02d}"
-                            )
+                            display_name = f"Apartment Plot {address_code}"
 
                         elif land_use == "residential":
                             residential_index += 1
-                            display_name = (
-                                f"Residential Plot R{residential_index:03d}"
-                            )
+                            display_name = f"Residential Plot {address_code}"
 
                         elif land_use == "school":
                             school_index += 1
-                            display_name = (
-                                f"School Campus S{school_index:02d}"
-                            )
+                            display_name = f"School Campus {address_code}"
 
                         elif land_use == "hospital":
                             hospital_index += 1
-                            display_name = (
-                                f"Hospital Campus H{hospital_index:02d}"
-                            )
+                            display_name = f"Hospital Campus {address_code}"
 
                         elif land_use == "park":
                             park_index += 1
-                            display_name = (
-                                f"Public Park P{park_index:02d}"
-                            )
+                            display_name = f"Public Park {address_code}"
 
                         elif land_use == "parking":
                             parking_index += 1
-                            display_name = (
-                                f"Common Parking CP{parking_index:02d}"
-                            )
+                            display_name = f"Common Parking {address_code}"
 
                         else:
                             names = {
@@ -1756,6 +2524,20 @@ def generate_demo_colony():
                             ),
                         )
 
+                        cursor.execute(
+                            """
+                            INSERT INTO township_addresses (
+                                parent_ulpin, plot_name, block_code, address_number,
+                                address_code, row_index, column_index, land_use
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                            """,
+                            (
+                                ulpin, display_name, block_code, address_number,
+                                address_code, row_index, column_index, land_use,
+                            ),
+                        )
+
                         plots.append(
                             {
                                 "number": parcel_number,
@@ -1764,6 +2546,9 @@ def generate_demo_colony():
                                 "land_use": land_use,
                                 "ulpin": ulpin,
                                 "name": display_name,
+                                "block_code": block_code,
+                                "address_number": address_number,
+                                "address_code": address_code,
                                 "min_lon": min_lon,
                                 "min_lat": min_lat,
                                 "max_lon": max_lon,
@@ -1777,6 +2562,7 @@ def generate_demo_colony():
 
                 apartment_counter = 0
                 residential_counter = 0
+                registered_3d_unit_count = 0
                 school_counter = 0
                 hospital_counter = 0
                 building_feature_count = 0
@@ -1864,9 +2650,9 @@ def generate_demo_colony():
                         building_code = f"B{apartment_counter:02d}"
                         floors = apartment_floors[apartment_counter - 1]
                         floor_height = 3.2
-                        units_per_floor = 4
+                        units_per_floor = 6
                         building_type = "Apartment Tower"
-                        feature_name = f"Residential Tower {building_code}"
+                        feature_name = f"Residential Tower {plot['address_code']}"
 
                         (
                             massing_style,
@@ -2213,6 +2999,10 @@ def generate_demo_colony():
 
                     metadata = {
                         "parent_ulpin": plot["ulpin"],
+                        "plot_name": plot["name"],
+                        "block_code": plot["block_code"],
+                        "address_number": plot["address_number"],
+                        "address_code": plot["address_code"],
                         "building_code": building_code,
                         "building_type": building_type,
                         "land_use": land_use,
@@ -2225,7 +3015,7 @@ def generate_demo_colony():
                         "facade_family": facade_family,
                         "roof_style": roof_style,
                         "podium_floors": podium_floors,
-                        "demo": "bhumi3d_township_v3_step3_5",
+                        "demo": "bhumi3d_township_v3_step3_7a",
                     }
 
                     cursor.execute(
@@ -2243,20 +3033,86 @@ def generate_demo_colony():
                             %s,
                             %s::jsonb,
                             ST_GeomFromText(%s, 4326)
-                        );
+                        )
+                        RETURNING id;
                         """,
                         (
                             building_type,
                             feature_name,
-                            "bhumi3d_township_v3_step3_5",
+                            "bhumi3d_township_v3_step3_7a",
                             json.dumps(metadata),
                             polygon_wkt(footprint),
                         ),
                     )
 
+                    building_feature_id = cursor.fetchone()[0]
+
+                    cursor.execute(
+                        """
+                        UPDATE township_addresses
+                        SET
+                            building_feature_id = %s,
+                            building_code = %s,
+                            building_name = %s,
+                            building_type = %s,
+                            floors = %s,
+                            units_per_floor = %s,
+                            floor_height = %s,
+                            height_m = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE parent_ulpin = %s;
+                        """,
+                        (
+                            building_feature_id, building_code, feature_name, building_type,
+                            floors, units_per_floor, floor_height, round(height_m, 2), plot["ulpin"],
+                        ),
+                    )
+
+                    if land_use == "apartment" and units_per_floor > 0:
+                        center_lat = (building_min_lat + building_max_lat) / 2
+                        width_m = ((building_max_lon - building_min_lon) * 111320
+                                   * max(0.25, math.cos(math.radians(center_lat))))
+                        depth_m = (building_max_lat - building_min_lat) * 111320
+                        columns = 3 if units_per_floor == 6 and width_m >= depth_m else 2 if units_per_floor == 6 else max(1, min(units_per_floor, int(math.ceil(math.sqrt(units_per_floor)))))
+                        rows_per_floor = int(math.ceil(units_per_floor / columns))
+                        lon_step = (building_max_lon - building_min_lon) / columns
+                        lat_step = (building_max_lat - building_min_lat) / rows_per_floor
+                        inset_ratio = 0.035
+                        unit_rows = []
+                        for floor_number in range(1, floors + 1):
+                            z_min = (floor_number - 1) * floor_height
+                            z_max = floor_number * floor_height
+                            floor_id = _floor_spatial_id(plot["ulpin"], plot["address_code"], floor_number)
+                            for unit_index in range(units_per_floor):
+                                column_index = unit_index % columns
+                                row_index = unit_index // columns
+                                unit_letter = chr(ord("A") + unit_index)
+                                display_unit = f"{floor_number}-{unit_letter}"
+                                child_id = _unit_spatial_id(plot["ulpin"], plot["address_code"], floor_number, unit_letter)
+                                unit_min_lon = building_min_lon + column_index * lon_step + lon_step * inset_ratio
+                                unit_max_lon = building_min_lon + (column_index + 1) * lon_step - lon_step * inset_ratio
+                                unit_min_lat = building_min_lat + row_index * lat_step + lat_step * inset_ratio
+                                unit_max_lat = building_min_lat + (row_index + 1) * lat_step - lat_step * inset_ratio
+                                unit_rows.append((plot["ulpin"], plot["block_code"], plot["address_code"], building_code, floor_number, floor_id, unit_letter, display_unit, child_id, round(z_min,3), round(z_max,3), unit_min_lon, unit_min_lat, unit_max_lon, unit_max_lat))
+                        cursor.executemany(
+                            """
+                            INSERT INTO township_units (
+                                parent_ulpin, block_code, address_code, building_code,
+                                floor_number, floor_id, unit_letter, display_unit,
+                                proposed_3d_ulpin, z_min, z_max, validation, footprint
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'Valid',
+                                    ST_MakeEnvelope(%s,%s,%s,%s,4326));
+                            """,
+                            unit_rows,
+                        )
+                        registered_3d_unit_count += len(unit_rows)
+
                     building_feature_count += 1
                     building_specs[plot["ulpin"]] = {
                         "code": building_code,
+                        "address_code": plot["address_code"],
+                        "block_code": plot["block_code"],
                         "land_use": land_use,
                         "height_m": height_m,
                         "min_lon": building_min_lon,
@@ -2451,12 +3307,48 @@ def generate_demo_colony():
                             "vehicle_kind": vehicle_kind,
                             "color": color,
                             "height_m": height_m,
+                            "length_m": length_m,
+                            "width_m": width_m,
+                            "center_lon": center_lon,
+                            "center_lat": center_lat,
                             "heading_deg": heading_deg,
                             "context": context,
+                            "visual_profile": (
+                                "ambulance" if vehicle_kind == "ambulance"
+                                else "school_bus" if vehicle_kind == "school_bus"
+                                else "township_bus" if vehicle_kind == "township_bus"
+                                else "passenger_car"
+                            ),
                         },
                         "ST_GeomFromText(%s, 4326)",
                         (wkt,),
                     )
+
+                # -------------------------------------------------
+                # STEP 3.6B REGIONAL CONTEXT + GROUNDING FOUNDATION
+                # -------------------------------------------------
+                # A broad, slightly lowered context plane prevents the Cesium
+                # viewport from reading as an isolated model floating in a blue
+                # void.  It intentionally extends well beyond the cadastral
+                # township boundary while remaining visually subordinate to it.
+                ground_asset_count += 1
+                _insert_colony_asset(
+                    cursor,
+                    "regional_context_ground",
+                    "CadastraX3D Regional Landscape Context",
+                    {
+                        "surface": "regional_ground",
+                        "step": "3.6B",
+                        "purpose": "realistic_non_cadastral_context",
+                    },
+                    "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+                    (
+                        base_lon - 0.00180,
+                        base_lat - 0.00190,
+                        township_max_lon + 0.00180,
+                        township_max_lat + 0.00165,
+                    ),
+                )
 
                 # -------------------------------------------------
                 # STEP 3.4 GROUNDING + GREEN-BELT FOUNDATION
@@ -3894,7 +4786,7 @@ def generate_demo_colony():
                     )
 
                 # -----------------------------------------
-                # STEP 3.5 MOBILITY + PUBLIC REALM REALISM
+                # STEP 3.6 VEHICLE + STREETSCAPE VISUAL POLISH
                 # -----------------------------------------
 
                 vehicle_palette = [
@@ -4068,8 +4960,14 @@ def generate_demo_colony():
                         shelter_name,
                         {
                             "orientation": orientation,
+                            "heading_deg": 0 if orientation == "east_west" else 90,
+                            "center_lon": shelter_lon,
+                            "center_lat": shelter_lat,
+                            "length_m": 8.0,
+                            "width_m": 3.0,
                             "height_m": 2.8,
                             "text": "BUS STOP",
+                            "visual_profile": "glass_shelter",
                         },
                         "ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
                         (
@@ -4079,39 +4977,63 @@ def generate_demo_colony():
                             shelter_lat + half_lat,
                         ),
                     )
+                    # Place the stop pole just outside the shelter instead of
+                    # through its centre, improving the ground-level read.
+                    if orientation == "east_west":
+                        sign_lon = shelter_lon + 4.35 / 97300.0
+                        sign_lat = shelter_lat - 1.72 / 111000.0
+                        sign_heading = 0
+                    else:
+                        sign_lon = shelter_lon + 1.72 / 97300.0
+                        sign_lat = shelter_lat + 4.35 / 111000.0
+                        sign_heading = 90
+
                     _insert_colony_asset(
                         cursor,
                         "bus_stop_sign",
                         f"{shelter_name} Sign",
-                        {"text": "BUS", "height_m": 2.6},
+                        {
+                            "text": "BUS",
+                            "height_m": 2.55,
+                            "heading_deg": sign_heading,
+                            "visual_profile": "compact_bus_stop",
+                        },
                         "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
-                        (shelter_lon, shelter_lat),
+                        (sign_lon, sign_lat),
                     )
 
                 wayfinding_specs = [
-                    ("Central Avenue Sign", township_center_lon - 0.00016, main_avenue_center_lat + 0.000075, "CENTRAL AVENUE"),
-                    ("North District Sign", central_boulevard_center_lon + 0.000080, y_starts[8] + plot_height * 0.55, "NORTH DISTRICT"),
-                    ("South District Sign", central_boulevard_center_lon - 0.000080, y_starts[1] + plot_height * 0.45, "SOUTH DISTRICT"),
-                    ("Hospital Direction Sign", x_starts[12] + plot_width * 0.75, y_starts[1] + plot_height * 0.50, "HOSPITAL →"),
-                    ("Market Direction Sign", x_starts[8] + plot_width * 0.45, y_starts[4] + plot_height * 0.18, "MARKET SQUARE →"),
-                    ("School Direction Sign", x_starts[1] + plot_width * 0.20, y_starts[0] + plot_height * 0.75, "SCHOOL ←"),
+                    ("Central Avenue Sign", township_center_lon - 0.00016, main_avenue_center_lat + 0.000075, "CENTRAL AVE", "road", 0),
+                    ("North District Sign", central_boulevard_center_lon + 0.000080, y_starts[8] + plot_height * 0.55, "NORTH DISTRICT", "district", 90),
+                    ("South District Sign", central_boulevard_center_lon - 0.000080, y_starts[1] + plot_height * 0.45, "SOUTH DISTRICT", "district", 90),
+                    ("Hospital Direction Sign", x_starts[12] + plot_width * 0.75, y_starts[1] + plot_height * 0.50, "HOSPITAL →", "destination", 0),
+                    ("Market Direction Sign", x_starts[8] + plot_width * 0.45, y_starts[4] + plot_height * 0.18, "MARKET →", "destination", 0),
+                    ("School Direction Sign", x_starts[1] + plot_width * 0.20, y_starts[0] + plot_height * 0.75, "← SCHOOL", "destination", 0),
                 ]
 
-                for sign_name, longitude, latitude, sign_text in wayfinding_specs:
+                for sign_name, longitude, latitude, sign_text, sign_category, sign_heading in wayfinding_specs:
                     wayfinding_sign_count += 1
                     _insert_colony_asset(
                         cursor,
                         "wayfinding_sign",
                         sign_name,
-                        {"text": sign_text, "height_m": 3.1},
+                        {
+                            "text": sign_text,
+                            "height_m": 2.75,
+                            "category": sign_category,
+                            "heading_deg": sign_heading,
+                            "visual_profile": "compact_wayfinding",
+                        },
                         "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
                         (longitude, latitude),
                     )
 
         return {
             "success": True,
-            "message": "Bhumi3D Township V3 Step 3.5 generated successfully",
-            "version": "township_v3_step3_5",
+            "message": "Bhumi3D Township V3 Step 3.7B interaction hotfix generated successfully",
+            "version": "township_v3_step3_7b_hotfix",
+            "blocks": ["A", "B", "C", "D"],
+            "apartment_units_per_floor": 6,
             "plot_count": 150,
             "apartment_plot_count": 50,
             "residential_plot_count": 80,
@@ -4152,13 +5074,15 @@ def generate_demo_colony():
             "entrance_name": "CadastraX3D Township",
             "apartment_floor_total": sum(apartment_floors),
             "highest_apartment_floors": max(apartment_floors),
-            "future_apartment_capacity_at_4_units_per_floor": (
-                sum(apartment_floors) * 4
+            "registered_3d_unit_count": registered_3d_unit_count,
+            "future_apartment_capacity_at_6_units_per_floor": (
+                sum(apartment_floors) * 6
             ),
             "note": (
-                "Step 3.5 adds populated parking areas, principal-road traffic, township shuttle buses, "
-                "bus shelters, EV charging points and close-range wayfinding while preserving the Step 3.4 "
-                "architecture and City/Cadastral presentation modes."
+                "Step 3.7A persists every apartment as a PostGIS volumetric cadastral unit with its own "
+                "proposed linked 3D ULPIN, keeps on-demand Cesium inspection for performance, repairs plot/building "
+                "address naming, and strengthens the judge-facing vertical cadastre without permanently "
+                "rendering thousands of apartment volumes."
             ),
         }
 
@@ -4234,6 +5158,8 @@ def create_building(request: BuildingCreateRequest):
     try:
         with get_connection() as connection:
             with connection.cursor() as cursor:
+
+                ensure_township_address_table(cursor)
 
                 cursor.execute(
                     """
@@ -4338,6 +5264,26 @@ def create_building(request: BuildingCreateRequest):
                         detail=(
                             "Building footprint must be completely "
                             "inside the selected parent land plot"
+                        ),
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT block_code, address_number, address_code, building_code
+                    FROM township_addresses
+                    WHERE parent_ulpin = %s
+                    LIMIT 1;
+                    """,
+                    (parent_ulpin,),
+                )
+                township_address = cursor.fetchone()
+
+                if township_address and township_address[3]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Plot {township_address[2]} already has an indexed building "
+                            f"({township_address[3]}). Choose a vacant township plot."
                         ),
                     )
 
@@ -4451,6 +5397,9 @@ def create_building(request: BuildingCreateRequest):
                     "feature_type": "Building Footprint",
                     "building_code": building_code,
                     "parent_ulpin": parent_ulpin,
+                    "block_code": township_address[0] if township_address else None,
+                    "address_number": township_address[1] if township_address else None,
+                    "address_code": township_address[2] if township_address else building_code,
                     "floors": request.floors,
                     "units_per_floor": request.units_per_floor,
                     "floor_height": request.floor_height,
@@ -4494,6 +5443,29 @@ def create_building(request: BuildingCreateRequest):
                 )
 
                 feature_id = cursor.fetchone()[0]
+
+                if township_address:
+                    cursor.execute(
+                        """
+                        UPDATE township_addresses
+                        SET
+                            building_feature_id = %s,
+                            building_code = %s,
+                            building_name = %s,
+                            building_type = 'Apartment Tower',
+                            floors = %s,
+                            units_per_floor = %s,
+                            floor_height = %s,
+                            height_m = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE parent_ulpin = %s;
+                        """,
+                        (
+                            feature_id, building_code, f"Building {building_code}",
+                            request.floors, request.units_per_floor, request.floor_height,
+                            request.floors * request.floor_height, parent_ulpin,
+                        ),
+                    )
 
                 strip_width = (
                     max_lon - min_lon
@@ -4542,10 +5514,8 @@ def create_building(request: BuildingCreateRequest):
                         ):
                             unit_max_lon = max_lon
 
-                        unit_code = (
-                            f"{floor_number}"
-                            f"{unit_index:02d}"
-                        )
+                        unit_letter = chr(ord("A") + unit_index - 1)
+                        unit_code = f"{floor_number}-{unit_letter}"
 
                         cursor.execute(
                             """
@@ -5015,14 +5985,13 @@ def generate_vertical_parcels(
 
                         # Example:
                         #
-                        # floor 1, unit 1 → 101
-                        # floor 4, unit 3 → 403
-                        # floor 10, unit 1 → 1001
+                        # Human-facing township convention:
+                        # floor 1, unit 1 → 1-A
+                        # floor 4, unit 3 → 4-C
+                        # floor 10, unit 1 → 10-A
 
-                        unit_code = (
-                            f"{floor_number}"
-                            f"{unit_index:02d}"
-                        )
+                        unit_letter = chr(ord("A") + unit_index - 1)
+                        unit_code = f"{floor_number}-{unit_letter}"
 
 
                         cursor.execute(
@@ -6161,10 +7130,8 @@ def generate_batch_buildings(
                             )
 
 
-                            unit_code = (
-                                f"{floor_number}"
-                                f"{unit_index:02d}"
-                            )
+                            unit_letter = chr(ord("A") + unit_index - 1)
+                            unit_code = f"{floor_number}-{unit_letter}"
 
 
                             # -------------------------------------

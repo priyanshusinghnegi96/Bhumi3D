@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import CesiumViewer from "./cesium/CesiumViewer";
 
@@ -12,6 +12,7 @@ import {
   generateBatchBuildings,
   createBuilding,
   generateDemoColony,
+  getTownshipUnit,
 } from "./services/api";
 
 function buildHierarchy(scene, gisData) {
@@ -34,6 +35,12 @@ function buildHierarchy(scene, gisData) {
           featureId: feature.id,
           plannedFloors: Number(feature.properties?.floors || 0),
           buildingType: feature.properties?.building_type || "Building",
+          blockCode: feature.properties?.block_code || parcel.block_code || "—",
+          addressNumber: Number(feature.properties?.address_number || parcel.address_number || 0),
+          addressCode: feature.properties?.address_code || parcel.address_code || buildingCode,
+          unitsPerFloor: Number(feature.properties?.units_per_floor || 0),
+          floorHeight: Number(feature.properties?.floor_height || 0),
+          heightMeters: Number(feature.properties?.height_m || 0),
         });
       }
     }
@@ -49,25 +56,43 @@ function buildHierarchy(scene, gisData) {
         (property) => property.type === "Apartment"
       );
 
-      const floors = Array.from(
+      const storedFloors = Array.from(
         new Set(apartments.map((property) => property.floor).filter(Boolean))
       ).sort((a, b) => Number(a) - Number(b));
 
-      const unitsByFloor = floors.map((floor) => ({
-        floor,
-        units: apartments
-          .filter((property) => property.floor === floor)
-          .map((property) => property.unit)
-          .sort((a, b) => Number(a) - Number(b)),
-      }));
+      const floorCount =
+        storedFloors.length > 0 ? storedFloors.length : building.plannedFloors;
+
+      const virtualUnits = Array.from(
+        { length: Math.max(0, building.unitsPerFloor) },
+        (_, index) => String.fromCharCode(65 + index)
+      );
+
+      const unitsByFloor = storedFloors.length > 0
+        ? storedFloors.map((floor) => ({
+            floor,
+            units: apartments
+              .filter((property) => property.floor === floor)
+              .map((property) => property.unit)
+              .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+          }))
+        : Array.from({ length: floorCount }, (_, index) => ({
+            floor: String(index + 1),
+            units: virtualUnits.map((letter) => `${index + 1}-${letter}`),
+          }));
+
+      const registeredUnitCount =
+        String(building.buildingType || "").toLowerCase().includes("apartment")
+          ? floorCount * Math.max(0, building.unitsPerFloor)
+          : 0;
 
       return {
         ...building,
-        floorCount:
-          floors.length > 0 ? floors.length : building.plannedFloors,
+        floorCount,
         propertyCount: properties.length,
         apartmentCount: apartments.length,
-        floors,
+        registeredUnitCount,
+        floors: storedFloors,
         unitsByFloor,
       };
     });
@@ -75,6 +100,10 @@ function buildHierarchy(scene, gisData) {
     return {
       ulpin: parcel.ulpin,
       name: parcel.name,
+      blockCode: parcel.block_code || buildings[0]?.blockCode || "—",
+      addressNumber: Number(parcel.address_number || buildings[0]?.addressNumber || 0),
+      addressCode: parcel.address_code || buildings[0]?.addressCode || "—",
+      landUse: parcel.land_use || "",
       buildings,
       buildingCount: buildings.length,
       floorCount: buildings.reduce(
@@ -88,8 +117,23 @@ function buildHierarchy(scene, gisData) {
     };
   });
 
+  const blocks = ["A", "B", "C", "D"].map((code) => {
+    const blockPlots = plots
+      .filter((plot) => plot.blockCode === code)
+      .sort((a, b) => a.addressNumber - b.addressNumber);
+
+    return {
+      code,
+      plots: blockPlots,
+      plotCount: blockPlots.length,
+      buildingCount: blockPlots.reduce((total, plot) => total + plot.buildingCount, 0),
+      floorCount: blockPlots.reduce((total, plot) => total + plot.floorCount, 0),
+    };
+  });
+
   return {
     plots,
+    blocks,
     totals: {
       plots: plots.length,
       buildings: plots.reduce((total, plot) => total + plot.buildingCount, 0),
@@ -98,6 +142,16 @@ function buildHierarchy(scene, gisData) {
         (total, plot) => total + plot.propertyCount,
         0
       ),
+      registeredUnits: Number.isFinite(Number(scene.registered_unit_count))
+        ? Number(scene.registered_unit_count)
+        : plots.reduce(
+            (total, plot) =>
+              total + plot.buildings.reduce(
+                (buildingTotal, building) => buildingTotal + (building.registeredUnitCount || 0),
+                0
+              ),
+            0
+          ),
     },
   };
 }
@@ -118,20 +172,92 @@ function getNextBuildingCode(hierarchy) {
   return `B${String(highestNumber + 1).padStart(2, "0")}`;
 }
 
+
+function hierarchyPlotTarget(plot) {
+  return {
+    result_type: "plot",
+    target_type: "plot",
+    target_id: `plot:${plot.ulpin}`,
+    title: plot.name || `Plot ${plot.addressCode}`,
+    block_code: plot.blockCode,
+    address_code: plot.addressCode,
+    address_number: plot.addressNumber,
+    parent_ulpin: plot.ulpin,
+    plot_name: plot.name,
+  };
+}
+
+function hierarchyBuildingTarget(plot, building) {
+  return {
+    result_type: "building",
+    target_type: "building",
+    target_id: `building:${building.addressCode}`,
+    title: building.addressCode,
+    subtitle: building.name,
+    block_code: building.blockCode || plot.blockCode,
+    address_code: building.addressCode,
+    address_number: building.addressNumber,
+    parent_ulpin: plot.ulpin,
+    plot_name: plot.name,
+    building_code: building.code,
+    building_name: building.name,
+    building_type: building.buildingType,
+    floors: building.floorCount,
+    units_per_floor: building.unitsPerFloor,
+    floor_height: building.floorHeight,
+    height_m: building.heightMeters,
+  };
+}
+
+function hierarchyFloorTarget(plot, building, floorNumber) {
+  const floorHeight = Number(building.floorHeight || 3.2);
+  return {
+    ...hierarchyBuildingTarget(plot, building),
+    result_type: "floor",
+    target_type: "floor",
+    target_id: `floor:${building.addressCode}:${floorNumber}`,
+    title: `${building.addressCode} · Floor ${floorNumber}`,
+    subtitle: `${building.unitsPerFloor || 0} apartments · Block ${building.blockCode || plot.blockCode}`,
+    floor: String(floorNumber),
+    z_min: (floorNumber - 1) * floorHeight,
+    z_max: floorNumber * floorHeight,
+  };
+}
+
+function hierarchyUnitTarget(plot, building, floorNumber, unitLetter) {
+  const compactAddress = String(building.addressCode || building.code).replace(/-/g, "");
+  const spatialId = `${plot.ulpin}-${compactAddress}-F${String(floorNumber).padStart(2, "0")}-U${unitLetter}`;
+  return {
+    ...hierarchyFloorTarget(plot, building, floorNumber),
+    result_type: "unit",
+    target_type: "unit",
+    target_id: `unit:${building.addressCode}:${floorNumber}:${unitLetter}`,
+    title: `${building.addressCode} · ${floorNumber}-${unitLetter}`,
+    subtitle: `Floor ${floorNumber} · Apartment ${unitLetter}`,
+    unit: unitLetter,
+    display_unit: `${floorNumber}-${unitLetter}`,
+    spatial_id: spatialId,
+    property_id: spatialId,
+  };
+}
+
 function App() {
   const [selectedProperty, setSelectedProperty] = useState(null);
 
   const [hierarchy, setHierarchy] = useState({
     plots: [],
+    blocks: [],
     totals: {
       plots: 0,
       buildings: 0,
       floors: 0,
       properties: 0,
+      registeredUnits: 0,
     },
   });
 
   const [layers, setLayers] = useState({
+    blocks: true,
     parcels: true,
     buildings: true,
     roads: true,
@@ -149,13 +275,16 @@ function App() {
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [mapSearchText, setMapSearchText] = useState("");
+  const [mapSearchTarget, setMapSearchTarget] = useState(null);
   const [searchTrigger, setSearchTrigger] = useState(0);
   const [searchMessage, setSearchMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const searchRequestIdRef = useRef(0);
   const [backendConnected, setBackendConnected] = useState(null);
 
   const [validationTrigger, setValidationTrigger] = useState(0);
   const [resetTrigger, setResetTrigger] = useState(0);
+  const [selectionClearTrigger, setSelectionClearTrigger] = useState(0);
   const [validationResult, setValidationResult] = useState(null);
 
   const [sceneVersion, setSceneVersion] = useState(0);
@@ -170,7 +299,7 @@ function App() {
   function applyCityView() {
     setViewMode("city");
     setLayers((previous) => ({
-      ...previous, parcels: false, buildings: true, roads: true, amenities: true,
+      ...previous, blocks: true, parcels: false, buildings: true, roads: true, amenities: true,
       landscape: true, lights: true, markings: true, signals: true, mobility: true,
       apartments: false, parking: true, utilities: true,
     }));
@@ -179,7 +308,7 @@ function App() {
   function applyCadastralView() {
     setViewMode("cadastral");
     setLayers((previous) => ({
-      ...previous, parcels: true, buildings: true, roads: true, amenities: false,
+      ...previous, blocks: true, parcels: true, buildings: true, roads: true, amenities: false,
       landscape: false, lights: false, markings: false, signals: false, mobility: false,
       apartments: true, parking: true, utilities: true,
     }));
@@ -292,67 +421,260 @@ function App() {
     }));
   }
 
-  async function handleSearch(event) {
-    event.preventDefault();
+  async function runUnifiedSearch(query, { auto = false } = {}) {
+    const cleanQuery = query.trim();
+    if (!cleanQuery) {
+      searchRequestIdRef.current += 1;
+      setSearchResults([]);
+      setSearchMessage("");
+      return [];
+    }
 
-    const query = searchText.trim();
-    if (!query) return;
-
-    setIsSearching(true);
-    setSearchResults([]);
-    setSearchMessage("Searching...");
+    const requestId = ++searchRequestIdRef.current;
+    if (!auto) setIsSearching(true);
 
     try {
-      const data = await searchProperties(query);
+      const data = await searchProperties(cleanQuery, 24);
+
+      // Autocomplete requests can finish out of order.  Only the newest
+      // response is allowed to update the UI.
+      if (requestId !== searchRequestIdRef.current) return [];
+
       setBackendConnected(true);
-
       const results = data.results || [];
-
-      if (results.length === 0) {
-        setSearchMessage("No matching property found.");
-        return;
-      }
-
-      if (results.length === 1) {
-        focusSearchResult(results[0]);
-        return;
-      }
-
       setSearchResults(results);
       setSearchMessage(
-        `${results.length} matching properties found. Select the correct building.`
+        data.message ||
+          (results.length ? `${results.length} result(s)` : "No matching cadastral object found.")
       );
+      return results;
     } catch (error) {
+      if (requestId !== searchRequestIdRef.current) return [];
       setBackendConnected(false);
       setSearchMessage(error.message || "Search failed.");
+      return [];
     } finally {
-      setIsSearching(false);
+      if (!auto && requestId === searchRequestIdRef.current) setIsSearching(false);
     }
   }
 
-  function focusSearchResult(property) {
+  useEffect(() => {
+    const query = searchText.trim();
+
+    if (!query) {
+      setSearchResults([]);
+      setSearchMessage("");
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      runUnifiedSearch(query, { auto: true });
+    }, 280);
+
+    return () => window.clearTimeout(timer);
+  }, [searchText]);
+
+  async function handleSearch(event) {
+    event.preventDefault();
+    const query = searchText.trim();
+    if (!query) return;
+
+    const results = await runUnifiedSearch(query);
+
+    if (results.length === 1) {
+      focusSearchResult(results[0]);
+    }
+  }
+
+  async function focusSearchResult(result) {
+    const targetType = result.target_type || result.result_type || "property";
+    let resolved = { ...result };
+
+    // Any apartment navigation path (search result or right-panel chip)
+    // is verified against the persisted PostGIS unit registry before the
+    // UI claims a 3D ULPIN.  This keeps the core cadastral identity honest.
+    if (targetType === "unit") {
+      const addressCode = result.address_code;
+      const floorNumber = Number(result.floor);
+      const unitLetter = String(result.unit || result.display_unit || "")
+        .toUpperCase()
+        .match(/([A-Z])$/)?.[1];
+
+      if (addressCode && Number.isFinite(floorNumber) && unitLetter) {
+        try {
+          const registered = await getTownshipUnit(addressCode, floorNumber, unitLetter);
+          setBackendConnected(true);
+          resolved = {
+            ...result,
+            parent_ulpin: registered.parent_ulpin,
+            plot_name: registered.plot_name,
+            block_code: registered.block_code,
+            address_number: registered.address_number,
+            address_code: registered.address_code,
+            building_code: registered.building_code,
+            building_name: registered.building_name,
+            building_type: registered.building_type,
+            floors: registered.floors,
+            units_per_floor: registered.units_per_floor,
+            floor_height: registered.floor_height,
+            height_m: registered.height_m,
+            floor: registered.floor,
+            unit: registered.unit,
+            display_unit: registered.display_unit,
+            property_id: registered.proposed_3d_ulpin,
+            spatial_id: registered.proposed_3d_ulpin,
+            z_min: registered.z_min,
+            z_max: registered.z_max,
+            validation: registered.validation,
+            registry_status: registered.registry_status,
+          };
+        } catch (error) {
+          console.error("Apartment registry lookup failed:", error);
+          setSearchMessage(error.message || "Registered apartment could not be verified.");
+          return;
+        }
+      }
+    }
+
+    const zMin = Number(resolved.z_min);
+    const zMax = Number(resolved.z_max);
+
+    let displayType = resolved.type || "3D Property";
+    if (targetType === "block") displayType = "Township Block";
+    if (targetType === "plot") displayType = "Land Parcel";
+    if (targetType === "building") displayType = "Building Footprint";
+    if (targetType === "floor") displayType = "Virtual Floor";
+    if (targetType === "unit") displayType = "Virtual Apartment";
+
     setSelectedProperty({
-      type: property.type,
-      parentUlpIn: property.parent_ulpin,
-      propertyId: property.property_id,
-      building: property.building,
-      floor: property.floor,
-      unit: property.unit,
-      verticalRange: `${property.z_min}m – ${property.z_max}m`,
-      validation: property.validation,
+      type: displayType,
+      resultType: targetType,
+      parentUlpIn: resolved.parent_ulpin || "—",
+      propertyId: resolved.spatial_id || resolved.property_id || resolved.target_id || "—",
+      building: resolved.building_code || resolved.building || "—",
+      buildingName: resolved.building_name || resolved.title || "—",
+      buildingType: resolved.building_type || "—",
+      blockCode: resolved.block_code || "—",
+      addressCode: resolved.address_code || (targetType === "block" ? `Block ${resolved.block_code}` : "—"),
+      addressNumber: resolved.address_number,
+      floor: resolved.floor || "—",
+      unit: resolved.display_unit || resolved.unit || "—",
+      unitsPerFloor: Number(resolved.units_per_floor || 0),
+      floorCount: Number(resolved.floors || resolved.floor_count || 0),
+      floorHeight: Number(resolved.floor_height || 0),
+      heightMeters: Number(resolved.height_m || 0),
+      verticalRange:
+        Number.isFinite(zMin) && Number.isFinite(zMax)
+          ? `${zMin}m – ${zMax}m`
+          : resolved.height_m
+            ? `0m – ${resolved.height_m}m`
+            : "—",
+      validation: resolved.validation || "Township address index",
+      plotName: resolved.plot_name || "—",
+      plotCount: resolved.plot_count,
+      buildingCount: resolved.building_count,
+      apartmentCapacity: resolved.apartment_capacity,
+      registryStatus: resolved.registry_status || (targetType === "unit" ? "Persisted in PostGIS" : undefined),
     });
 
-    setMapSearchText(property.property_id);
+    setMapSearchText(resolved.target_id || resolved.property_id || resolved.address_code || "");
+    setMapSearchTarget(resolved);
     setSearchTrigger((value) => value + 1);
     setSearchResults([]);
-    setSearchMessage(`Selected ${property.building} / Unit ${property.unit}`);
+    setSearchMessage(`Focused on ${resolved.title || resolved.address_code || resolved.property_id}`);
   }
 
   function handleSearchResult(result) {
     if (result?.found) {
       setSearchMessage(`Focused on ${result.name}`);
+    } else if (result?.message) {
+      setSearchMessage(result.message);
     }
   }
+
+  async function handleMapSelect(selection) {
+    if (!selection) {
+      setSelectedProperty(null);
+      return;
+    }
+
+    if (selection.type !== "Virtual Apartment") {
+      setSelectedProperty(selection);
+      return;
+    }
+
+    const addressCode = selection.addressCode;
+    const floorNumber = Number(selection.floor);
+    const unitMatch = String(selection.unit || "").toUpperCase().match(/([A-Z])$/);
+    const unitLetter = unitMatch?.[1];
+
+    if (!addressCode || !Number.isFinite(floorNumber) || !unitLetter) {
+      setSelectedProperty(selection);
+      return;
+    }
+
+    try {
+      const registered = await getTownshipUnit(addressCode, floorNumber, unitLetter);
+      setBackendConnected(true);
+      setSelectedProperty({
+        ...selection,
+        parentUlpIn: registered.parent_ulpin || selection.parentUlpIn,
+        propertyId: registered.proposed_3d_ulpin || registered.spatial_id || selection.propertyId,
+        blockCode: registered.block_code || selection.blockCode,
+        addressCode: registered.address_code || selection.addressCode,
+        addressNumber: registered.address_number ?? selection.addressNumber,
+        building: registered.building_code || selection.building,
+        buildingName: registered.building_name || selection.buildingName,
+        buildingType: registered.building_type || selection.buildingType,
+        floor: registered.floor || selection.floor,
+        unit: registered.display_unit || `${registered.floor}-${registered.unit}` || selection.unit,
+        unitsPerFloor: Number(registered.units_per_floor || selection.unitsPerFloor || 0),
+        floorCount: Number(registered.floors || selection.floorCount || 0),
+        floorHeight: Number(registered.floor_height || selection.floorHeight || 0),
+        heightMeters: Number(registered.height_m || selection.heightMeters || 0),
+        verticalRange: `${registered.z_min}m – ${registered.z_max}m`,
+        validation: registered.validation || selection.validation,
+        registryStatus: registered.registry_status || "Persisted in PostGIS",
+        plotName: registered.plot_name || selection.plotName,
+      });
+    } catch (error) {
+      console.error("Could not verify apartment registry record:", error);
+      setSelectedProperty(selection);
+    }
+  }
+
+  function closeCadastralInspection() {
+    setSelectedProperty(null);
+    setMapSearchTarget(null);
+    setMapSearchText("");
+    setSearchResults([]);
+    setSearchMessage("");
+    setSelectionClearTrigger((value) => value + 1);
+  }
+
+  useEffect(() => {
+    const blockCode = selectedProperty?.blockCode;
+    const addressCode = selectedProperty?.addressCode;
+
+    if (blockCode && blockCode !== "—") {
+      const blockDetails = document.querySelector(
+        `[data-hierarchy-block="${blockCode}"]`
+      );
+      if (blockDetails) blockDetails.open = true;
+    }
+
+    if (addressCode && addressCode !== "—") {
+      const timer = window.setTimeout(() => {
+        const target = document.querySelector(
+          `[data-hierarchy-address="${addressCode}"]`
+        );
+        target?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 80);
+      return () => window.clearTimeout(timer);
+    }
+
+    return undefined;
+  }, [selectedProperty?.blockCode, selectedProperty?.addressCode, selectedProperty?.floor, selectedProperty?.unit]);
 
   function handleValidationResult(result) {
     setValidationResult(result);
@@ -525,7 +847,7 @@ function App() {
 
   async function handleGenerateDemoColony() {
     const confirmed = window.confirm(
-      "Generate Bhumi3D Township V3 Step 3.5 mobility + public realm upgrade?\n\n" +
+      "Generate Bhumi3D Township V3 Step 3.7A registered 3D apartment cadastre + final interaction/visual upgrades?\n\n" +
         "This replaces the current demo parcels, buildings and 3D properties. " +
         "Your code is not changed."
     );
@@ -533,7 +855,7 @@ function App() {
     if (!confirmed) return;
 
     setIsGeneratingColony(true);
-    setColonyMessage("Generating Township V3 Step 3.5 mobility + public realm upgrade...");
+    setColonyMessage("Generating Township V3 Step 3.7A registered 3D apartment cadastre, linked 3D ULPINs and final scene polish...");
 
     try {
       const result = await generateDemoColony();
@@ -543,6 +865,8 @@ function App() {
       setSelectedProperty(null);
       setSearchResults([]);
       setSearchMessage("");
+      setSearchText("");
+      setMapSearchTarget(null);
 
       setColonyMessage(
         `✓ Township ready: ${result.plot_count} plots, ` +
@@ -551,6 +875,7 @@ function App() {
           `${result.hospital_count} hospitals, ${result.road_count} roads, ` +
           `${result.tree_count} landscape trees, ${result.vehicle_count || 0} vehicles, ` +
           `${result.bus_shelter_count || 0} bus shelters, ${result.ev_charger_count || 0} EV chargers, ` +
+          `${result.registered_3d_unit_count || 0} registered 3D apartment units, ` +
           `perimeter green belts and the ${result.entrance_name} entrance.`
       );
 
@@ -857,20 +1182,21 @@ function App() {
         </div>
       )}
 
-      <main className="workspace">
+      <main className={selectedProperty ? "workspace" : "workspace property-panel-closed"}>
         <aside className="left-sidebar">
-          <section className="sidebar-section">
-            <h3>Property Search</h3>
+          <section className="sidebar-section search-section">
+            <div className="section-title-row">
+              <h3>Unified Cadastral Search</h3>
+              <span className="search-scope-badge">A · B · C · D</span>
+            </div>
 
             <form className="search-form" onSubmit={handleSearch}>
               <input
                 type="text"
                 value={searchText}
-                onChange={(event) => {
-                  setSearchText(event.target.value);
-                  setSearchResults([]);
-                }}
-                placeholder="403, B02, Spatial ID..."
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="12, A-12, A-12 17-C, ULPIN, hospital..."
+                autoComplete="off"
               />
 
               <button type="submit" disabled={isSearching}>
@@ -878,32 +1204,49 @@ function App() {
               </button>
             </form>
 
+            <div className="search-help">
+              <span><b>12</b> → same building number across Blocks A–D</span>
+              <span><b>A-12 17-C</b> → Building A-12, Floor 17, Apartment C</span>
+            </div>
+
             {searchMessage && (
               <div className="search-message">{searchMessage}</div>
             )}
 
             {searchResults.length > 0 && (
-              <div className="search-results">
-                {searchResults.map((property) => (
+              <div className="search-results unified-results">
+                {searchResults.map((result, index) => (
                   <button
                     type="button"
-                    className="search-result-card"
-                    key={property.property_id}
-                    onClick={() => focusSearchResult(property)}
+                    className="search-result-card unified-search-card"
+                    key={result.target_id || result.property_id || `${result.title}-${index}`}
+                    onClick={() => focusSearchResult(result)}
                   >
                     <div className="search-result-top">
-                      <strong>{property.building}</strong>
-                      <span>Unit {property.unit}</span>
+                      <strong>{result.title || result.address_code || result.property_id}</strong>
+                      <span className={`result-type result-${result.result_type || "property"}`}>
+                        {(result.result_type || "property").toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="search-result-description">
+                      {result.subtitle || result.building_name || result.type}
                     </div>
 
                     <div className="search-result-meta">
-                      <span>Floor {property.floor}</span>
-                      <span>{property.parent_ulpin}</span>
+                      {result.block_code && <span>Block {result.block_code}</span>}
+                      {result.floors > 0 && <span>{result.floors} floors</span>}
+                      {result.units_per_floor > 1 && (
+                        <span>{result.units_per_floor} apartments / floor</span>
+                      )}
                     </div>
 
-                    <div className="search-result-id">
-                      {property.property_id}
-                    </div>
+                    {(result.spatial_id || result.parent_ulpin) && (
+                      <div className="search-result-id">
+                        {result.result_type === "unit" ? "3D ULPIN: " : "Parent ULPIN: "}
+                        {result.result_type === "unit" ? result.spatial_id : result.parent_ulpin}
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
@@ -913,27 +1256,152 @@ function App() {
           <section className="sidebar-section">
             <h3>Cadastral Hierarchy</h3>
 
-            <div className="hierarchy-tree">
-              {hierarchy.plots.map((plot) => (
-                <div className="hierarchy-plot" key={plot.ulpin}>
-                  <div className="hierarchy-plot-title">
-                    <strong>{plot.name}</strong>
-                    <span>{plot.ulpin}</span>
-                  </div>
+            <div className="hierarchy-tree block-hierarchy">
+              {(hierarchy.blocks || []).map((block) => (
+                <details
+                  className={
+                    selectedProperty?.blockCode === block.code
+                      ? "hierarchy-block selected"
+                      : "hierarchy-block"
+                  }
+                  key={block.code}
+                  data-hierarchy-block={block.code}
+                >
+                  <summary>
+                    <strong>BLOCK {block.code}</strong>
+                    <span>{block.plotCount} plots · {block.buildingCount} buildings</span>
+                  </summary>
 
-                  {plot.buildings.map((building) => (
-                    <div
-                      className="hierarchy-building"
-                      key={`${plot.ulpin}-${building.code}`}
-                    >
-                      <strong>↳ {building.code}</strong>
-                      <span>
-                        {building.floorCount} floors •{" "}
-                        {building.propertyCount} properties
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                  <div className="hierarchy-block-content">
+                    {block.plots.map((plot) => {
+                      const plotSelected =
+                        selectedProperty?.parentUlpIn === plot.ulpin &&
+                        selectedProperty?.type === "Land Parcel";
+
+                      return (
+                        <div
+                          className={plotSelected ? "hierarchy-plot selected" : "hierarchy-plot"}
+                          key={plot.ulpin}
+                        >
+                          <button
+                            type="button"
+                            className="hierarchy-plot-title hierarchy-plot-button"
+                            onClick={() => focusSearchResult(hierarchyPlotTarget(plot))}
+                            title={`Focus ${plot.name}`}
+                          >
+                            <strong>
+                              {plot.addressCode !== "—" ? `${plot.addressCode} · ` : ""}
+                              {plot.name}
+                            </strong>
+                            <span>{plot.ulpin}</span>
+                          </button>
+
+                          {plot.buildings.map((building) => {
+                            const buildingSelected =
+                              selectedProperty?.building &&
+                              selectedProperty.building !== "—" &&
+                              selectedProperty?.addressCode === building.addressCode;
+                            const selectedFloorNumber = buildingSelected
+                              ? Number(selectedProperty?.floor)
+                              : 0;
+                            const selectedUnitLetter = buildingSelected
+                              ? String(selectedProperty?.unit || "").toUpperCase().match(/([A-Z])$/)?.[1]
+                              : null;
+
+                            return (
+                              <div
+                                className={
+                                  buildingSelected
+                                    ? "hierarchy-building selected"
+                                    : "hierarchy-building"
+                                }
+                                key={`${plot.ulpin}-${building.code}`}
+                                data-hierarchy-address={building.addressCode}
+                              >
+                                <button
+                                  type="button"
+                                  className="hierarchy-building-button"
+                                  onClick={() => focusSearchResult(hierarchyBuildingTarget(plot, building))}
+                                  title={`Focus building ${building.addressCode}`}
+                                >
+                                  <strong>↳ {building.addressCode}</strong>
+                                  <span>
+                                    {building.code} · {building.floorCount} floors
+                                    {building.unitsPerFloor > 1
+                                      ? ` · ${building.unitsPerFloor} units/floor`
+                                      : ""}
+                                  </span>
+                                </button>
+
+                                {buildingSelected && building.floorCount > 0 && (
+                                  <div className="hierarchy-building-drilldown">
+                                    <div className="hierarchy-drilldown-label">Floors</div>
+                                    <div className="hierarchy-floor-grid">
+                                      {Array.from({ length: building.floorCount }, (_, index) => index + 1).map((floorNumber) => (
+                                        <button
+                                          type="button"
+                                          key={floorNumber}
+                                          className={
+                                            selectedFloorNumber === floorNumber
+                                              ? "hierarchy-floor-button selected"
+                                              : "hierarchy-floor-button"
+                                          }
+                                          onClick={() =>
+                                            focusSearchResult(
+                                              hierarchyFloorTarget(plot, building, floorNumber)
+                                            )
+                                          }
+                                        >
+                                          {floorNumber}
+                                        </button>
+                                      ))}
+                                    </div>
+
+                                    {Number.isFinite(selectedFloorNumber) &&
+                                      selectedFloorNumber > 0 &&
+                                      building.unitsPerFloor > 0 && (
+                                        <div className="hierarchy-unit-drilldown">
+                                          <div className="hierarchy-drilldown-label">Floor {selectedFloorNumber} apartments</div>
+                                          <div className="hierarchy-unit-grid">
+                                            {Array.from(
+                                              { length: building.unitsPerFloor },
+                                              (_, index) => String.fromCharCode(65 + index)
+                                            ).map((letter) => (
+                                              <button
+                                                type="button"
+                                                key={letter}
+                                                className={
+                                                  selectedUnitLetter === letter
+                                                    ? "hierarchy-unit-button selected"
+                                                    : "hierarchy-unit-button"
+                                                }
+                                                onClick={() =>
+                                                  focusSearchResult(
+                                                    hierarchyUnitTarget(
+                                                      plot,
+                                                      building,
+                                                      selectedFloorNumber,
+                                                      letter
+                                                    )
+                                                  )
+                                                }
+                                              >
+                                                {selectedFloorNumber}-{letter}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
               ))}
             </div>
           </section>
@@ -942,6 +1410,7 @@ function App() {
             <h3>Layers</h3>
 
             {[
+              ["blocks", "Block Boundaries / Labels"],
               ["parcels", "Land Plots"],
               ["buildings", "Buildings / GIS"],
               ["roads", "Road Network"],
@@ -949,7 +1418,7 @@ function App() {
               ["landscape", "Trees / Landscape / Entrance"],
               ["markings", "Road Markings / Crossings"],
               ["signals", "Traffic Signals"],
-              ["mobility", "Vehicles / Transit / EV"],
+              ["mobility", "Vehicles / Transit / EV / Signs"],
               ["lights", "Modern Street Lights"],
               ["apartments", "Apartments"],
               ["parking", "Basement Parking"],
@@ -1083,8 +1552,8 @@ function App() {
             />
             <SummaryItem value={hierarchy.totals.floors} label="Floors" />
             <SummaryItem
-              value={hierarchy.totals.properties}
-              label="3D Properties"
+              value={hierarchy.totals.registeredUnits || 0}
+              label="3D Units"
             />
           </div>
 
@@ -1117,20 +1586,23 @@ function App() {
             </div>
 
             <div className="camera-help">
-              City View emphasizes the built township. Cadastral View emphasizes parcels and property layers. Select or double-click a building to inspect it with the mouse.
+              City View emphasizes the built township. Click a building to reveal its floors, click a floor to reveal its apartments, and click an apartment to read its cadastral information. Double-click keeps the building as the camera orbit pivot.
             </div>
           </div>
 
           <CesiumViewer
             key={sceneVersion}
-            onSelect={setSelectedProperty}
+            onSelect={handleMapSelect}
             layers={layers}
+            viewMode={viewMode}
             cameraCommand={cameraCommand}
             searchText={mapSearchText}
+            searchTarget={mapSearchTarget}
             searchTrigger={searchTrigger}
             onSearchResult={handleSearchResult}
             validationTrigger={validationTrigger}
             resetTrigger={resetTrigger}
+            selectionClearTrigger={selectionClearTrigger}
             onValidationResult={handleValidationResult}
             footprintPickTrigger={footprintPickTrigger}
             footprintCancelTrigger={footprintCancelTrigger}
@@ -1209,10 +1681,14 @@ function App() {
           )}
         </section>
 
-        <PropertyInformation
-          selectedProperty={selectedProperty}
-          hierarchy={hierarchy}
-        />
+        {selectedProperty && (
+          <PropertyInformation
+            selectedProperty={selectedProperty}
+            hierarchy={hierarchy}
+            onNavigate={focusSearchResult}
+            onClose={closeCadastralInspection}
+          />
+        )}
       </main>
 
       {showBuildingCreator && (
@@ -1843,16 +2319,15 @@ function SummaryItem({ value, label }) {
   );
 }
 
-function PropertyInformation({ selectedProperty, hierarchy }) {
+function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose }) {
   if (!selectedProperty) {
     return (
       <aside className="property-panel">
         <h2>Cadastral Information</h2>
-
         <div className="empty-property">
-          Click a land plot, building, apartment, or search for a
-          property.
+          Search a block address, plot, building, floor or apartment — or click an object on the map.
         </div>
+        <SelectionLegend />
       </aside>
     );
   }
@@ -1860,129 +2335,367 @@ function PropertyInformation({ selectedProperty, hierarchy }) {
   const plot = hierarchy.plots.find(
     (item) => item.ulpin === selectedProperty.parentUlpIn
   );
-
   const building = plot?.buildings.find(
     (item) => item.code === selectedProperty.building
   );
+  const block = (hierarchy.blocks || []).find(
+    (item) => item.code === selectedProperty.blockCode
+  );
 
-  if (selectedProperty.type === "Land Parcel") {
-    return (
-      <aside className="property-panel">
-        <div className="panel-type-badge">LAND PLOT</div>
+  const effectiveAddress =
+    selectedProperty.addressCode && selectedProperty.addressCode !== "—"
+      ? selectedProperty.addressCode
+      : building?.addressCode || plot?.addressCode || "—";
+  const effectiveFloors = Number(
+    selectedProperty.floorCount || building?.floorCount || 0
+  );
+  const effectiveUnitsPerFloor = Number(
+    selectedProperty.unitsPerFloor || building?.unitsPerFloor || 0
+  );
+  const effectiveFloorHeight = Number(
+    selectedProperty.floorHeight || building?.floorHeight || 3.2
+  );
+  const blockCode = selectedProperty.blockCode || building?.blockCode || plot?.blockCode || "—";
 
-        <h2>{plot?.name || "Land Plot"}</h2>
-
-        <InfoRow label="ULPIN" value={selectedProperty.parentUlpIn} />
-        <InfoRow label="Buildings" value={plot?.buildingCount ?? 0} />
-        <InfoRow label="Total Floors" value={plot?.floorCount ?? 0} />
-        <InfoRow
-          label="Vertical Properties"
-          value={plot?.propertyCount ?? 0}
-        />
-
-        {plot?.buildings.length > 0 && (
-          <div className="relationship-box">
-            <div className="relationship-title">Plot → Buildings</div>
-
-            {plot.buildings.map((item) => (
-              <div className="relationship-line" key={item.code}>
-                <strong>{item.code}</strong>
-                <span>
-                  {item.floorCount} floors • {item.propertyCount}{" "}
-                  properties
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </aside>
-    );
+  function blockTarget() {
+    return {
+      result_type: "block",
+      target_type: "block",
+      target_id: `block:${blockCode}`,
+      title: `Block ${blockCode}`,
+      block_code: blockCode,
+      parent_ulpin: null,
+    };
   }
 
-  if (selectedProperty.type === "Building Footprint") {
-    return (
-      <aside className="property-panel">
-        <div className="panel-type-badge building-badge">BUILDING</div>
-
-        <h2>{selectedProperty.building}</h2>
-
-        <InfoRow label="Parent Plot" value={plot?.name || "—"} />
-        <InfoRow
-          label="Parent ULPIN"
-          value={selectedProperty.parentUlpIn}
-        />
-        <InfoRow label="Floors" value={building?.floorCount ?? 0} />
-        <InfoRow
-          label="Vertical Properties"
-          value={building?.propertyCount ?? 0}
-        />
-        <InfoRow
-          label="Validation"
-          value={selectedProperty.validation}
-        />
-
-        {building?.unitsByFloor?.length > 0 && (
-          <div className="relationship-box">
-            <div className="relationship-title">
-              Building → Floors → Units
-            </div>
-
-            {building.unitsByFloor.map((floorData) => (
-              <div className="floor-row" key={floorData.floor}>
-                <strong>Floor {floorData.floor}</strong>
-                <span>{floorData.units.join(", ")}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </aside>
-    );
+  function plotTarget() {
+    return {
+      result_type: "plot",
+      target_type: "plot",
+      target_id: `plot:${selectedProperty.parentUlpIn}`,
+      title: plot?.name || `Plot ${effectiveAddress}`,
+      block_code: blockCode,
+      address_code: effectiveAddress,
+      parent_ulpin: selectedProperty.parentUlpIn,
+      plot_name: plot?.name,
+    };
   }
+
+  function buildingTarget() {
+    return {
+      result_type: "building",
+      target_type: "building",
+      target_id: `building:${effectiveAddress}`,
+      title: effectiveAddress,
+      subtitle: selectedProperty.buildingName || building?.name,
+      block_code: blockCode,
+      address_code: effectiveAddress,
+      address_number: selectedProperty.addressNumber || building?.addressNumber,
+      parent_ulpin: selectedProperty.parentUlpIn,
+      plot_name: plot?.name,
+      building_code: selectedProperty.building,
+      building_name: selectedProperty.buildingName || building?.name,
+      building_type: selectedProperty.buildingType || building?.buildingType,
+      floors: effectiveFloors,
+      units_per_floor: effectiveUnitsPerFloor,
+      floor_height: effectiveFloorHeight,
+      height_m: selectedProperty.heightMeters || building?.heightMeters,
+    };
+  }
+
+  function floorTarget(floorNumber) {
+    return {
+      ...buildingTarget(),
+      result_type: "floor",
+      target_type: "floor",
+      target_id: `floor:${effectiveAddress}:${floorNumber}`,
+      title: `${effectiveAddress} · Floor ${floorNumber}`,
+      subtitle: `${effectiveUnitsPerFloor} apartments · Block ${blockCode}`,
+      floor: String(floorNumber),
+      z_min: (floorNumber - 1) * effectiveFloorHeight,
+      z_max: floorNumber * effectiveFloorHeight,
+    };
+  }
+
+  function unitTarget(floorNumber, unitLetter) {
+    const displayUnit = `${floorNumber}-${unitLetter}`;
+    const spatialId = `${selectedProperty.parentUlpIn}-${String(effectiveAddress).replace(/-/g, "")}-F${String(floorNumber).padStart(2, "0")}-U${unitLetter}`;
+    return {
+      ...floorTarget(floorNumber),
+      result_type: "unit",
+      target_type: "unit",
+      target_id: `unit:${effectiveAddress}:${floorNumber}:${unitLetter}`,
+      title: `${effectiveAddress} · ${displayUnit}`,
+      subtitle: `Floor ${floorNumber} · Apartment ${unitLetter}`,
+      unit: unitLetter,
+      display_unit: displayUnit,
+      spatial_id: spatialId,
+      property_id: spatialId,
+    };
+  }
+
+  const selectedFloor = Number(selectedProperty.floor);
+  const selectedUnitLetter = String(selectedProperty.unit || "")
+    .toUpperCase()
+    .match(/([A-Z])$/)?.[1];
+
+  const breadcrumbs = [];
+  if (blockCode !== "—") breadcrumbs.push({ label: `Block ${blockCode}`, target: blockTarget() });
+  if (selectedProperty.parentUlpIn && selectedProperty.parentUlpIn !== "—") {
+    breadcrumbs.push({ label: "Plot", target: plotTarget() });
+  }
+  if (selectedProperty.building && selectedProperty.building !== "—") {
+    breadcrumbs.push({ label: effectiveAddress, target: buildingTarget() });
+  }
+  if (Number.isFinite(selectedFloor) && selectedFloor > 0) {
+    breadcrumbs.push({ label: `Floor ${selectedFloor}`, target: floorTarget(selectedFloor) });
+  }
+  if (selectedProperty.type === "Virtual Apartment" && selectedUnitLetter) {
+    breadcrumbs.push({ label: `${selectedFloor}-${selectedUnitLetter}`, target: unitTarget(selectedFloor, selectedUnitLetter) });
+  }
+
+  const upTarget =
+    selectedProperty.type === "Virtual Apartment"
+      ? floorTarget(selectedFloor)
+      : selectedProperty.type === "Virtual Floor"
+        ? buildingTarget()
+        : selectedProperty.type === "Building Footprint"
+          ? plotTarget()
+          : selectedProperty.type === "Land Parcel"
+            ? blockTarget()
+            : null;
 
   return (
     <aside className="property-panel">
-      <div className="panel-type-badge property-badge">3D PROPERTY</div>
-
-      <h2>Property Information</h2>
-
-      <InfoRow label="Type" value={selectedProperty.type} />
-      <InfoRow label="Parent Plot" value={plot?.name || "—"} />
-      <InfoRow
-        label="Parent ULPIN"
-        value={selectedProperty.parentUlpIn}
-      />
-      <InfoRow label="Building" value={selectedProperty.building} />
-      <InfoRow label="Floor" value={selectedProperty.floor} />
-      <InfoRow label="Unit" value={selectedProperty.unit} />
-      <InfoRow
-        label="Vertical Range"
-        value={selectedProperty.verticalRange}
-      />
-      <InfoRow
-        label="Spatial ID"
-        value={selectedProperty.propertyId}
-      />
-      <InfoRow
-        label="Validation"
-        value={selectedProperty.validation}
-      />
-
-      <div className="relationship-box">
-        <div className="relationship-title">
-          Cadastral Relationship
+      <div className="panel-navigation">
+        <div className="panel-navigation-head">
+          <div className="cadastral-breadcrumbs">
+            {breadcrumbs.map((crumb, index) => (
+              <button
+                type="button"
+                key={`${crumb.label}-${index}`}
+                className={index === breadcrumbs.length - 1 ? "breadcrumb-chip current" : "breadcrumb-chip"}
+                onClick={() => index < breadcrumbs.length - 1 && onNavigate?.(crumb.target)}
+                disabled={index === breadcrumbs.length - 1}
+              >
+                {crumb.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="close-inspection-button"
+            onClick={() => onClose?.()}
+            aria-label="Close cadastral inspection"
+            title="Close inspection"
+          >
+            ×
+          </button>
         </div>
-
-        <div className="relationship-path">
-          <span>{plot?.name || "Plot"}</span>
-          <b>↓</b>
-          <span>{selectedProperty.building}</span>
-          <b>↓</b>
-          <span>Floor {selectedProperty.floor}</span>
-          <b>↓</b>
-          <span>Unit {selectedProperty.unit}</span>
-        </div>
+        {upTarget && (
+          <button type="button" className="up-level-button" onClick={() => onNavigate?.(upTarget)}>
+            ← Up one level
+          </button>
+        )}
       </div>
+
+      {selectedProperty.type === "Township Block" && (
+        <>
+          <div className="panel-type-badge block-badge">TOWNSHIP BLOCK</div>
+          <h2>Block {blockCode}</h2>
+          <InfoRow label="Plots" value={selectedProperty.plotCount ?? block?.plotCount ?? 0} />
+          <InfoRow label="Buildings" value={selectedProperty.buildingCount ?? block?.buildingCount ?? 0} />
+          <InfoRow label="Floors" value={block?.floorCount ?? 0} />
+          <InfoRow label="Address Format" value={`${blockCode}-01, ${blockCode}-02, ...`} />
+        </>
+      )}
+
+      {selectedProperty.type === "Land Parcel" && (
+        <>
+          <div className="panel-type-badge plot-badge">LAND PLOT</div>
+          <h2>{plot?.name || selectedProperty.plotName || "Land Plot"}</h2>
+          <InfoRow label="Block" value={blockCode} />
+          <InfoRow label="Plot Address" value={effectiveAddress} />
+          <InfoRow label="2D ULPIN" value={selectedProperty.parentUlpIn} />
+          <InfoRow label="Buildings" value={plot?.buildingCount ?? 0} />
+          <InfoRow label="Total Floors" value={plot?.floorCount ?? 0} />
+          {plot?.buildings?.length > 0 && (
+            <div className="relationship-box">
+              <div className="relationship-title">Plot → Building</div>
+              {plot.buildings.map((item) => (
+                <button
+                  type="button"
+                  className="relationship-link"
+                  key={item.code}
+                  onClick={() => onNavigate?.({
+                    result_type: "building",
+                    target_type: "building",
+                    target_id: `building:${item.addressCode}`,
+                    title: item.addressCode,
+                    block_code: item.blockCode,
+                    address_code: item.addressCode,
+                    address_number: item.addressNumber,
+                    parent_ulpin: plot.ulpin,
+                    plot_name: plot.name,
+                    building_code: item.code,
+                    building_name: item.name,
+                    building_type: item.buildingType,
+                    floors: item.floorCount,
+                    units_per_floor: item.unitsPerFloor,
+                    floor_height: item.floorHeight,
+                    height_m: item.heightMeters,
+                  })}
+                >
+                  <strong>{item.addressCode}</strong>
+                  <span>{item.code} · {item.floorCount} floors</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {selectedProperty.type === "Building Footprint" && (
+        <>
+          <div className="panel-type-badge building-badge">BUILDING</div>
+          <h2>{effectiveAddress}</h2>
+          <div className="panel-subtitle">{selectedProperty.buildingName || building?.name}</div>
+          <InfoRow label="Block" value={blockCode} />
+          <InfoRow label="Building Address" value={effectiveAddress} />
+          <InfoRow label="Legacy Code" value={selectedProperty.building} />
+          <InfoRow label="Building Type" value={selectedProperty.buildingType || building?.buildingType} />
+          <InfoRow label="Parent Plot" value={plot?.name || selectedProperty.plotName || "—"} />
+          <InfoRow label="Parent 2D ULPIN" value={selectedProperty.parentUlpIn} />
+          <InfoRow label="Floors" value={effectiveFloors} />
+          <InfoRow label="Apartments / Floor" value={effectiveUnitsPerFloor > 0 ? effectiveUnitsPerFloor : "—"} />
+          <InfoRow label="Registered 3D Units" value={effectiveUnitsPerFloor > 0 ? effectiveFloors * effectiveUnitsPerFloor : "—"} />
+          <InfoRow label="Height" value={selectedProperty.heightMeters ? `${selectedProperty.heightMeters} m` : building?.heightMeters ? `${building.heightMeters} m` : "—"} />
+          <div className="inspection-tip building-tip">
+            <strong>Step 1 of 2: choose a floor</strong>
+            <span>Apartments remain hidden until a floor is selected.</span>
+          </div>
+          {effectiveFloors > 0 && (
+            <div className="relationship-box floor-directory">
+              <div className="relationship-title">Building → Floors</div>
+              <div className="floor-button-grid">
+                {Array.from({ length: effectiveFloors }, (_, index) => index + 1).map((floorNumber) => (
+                  <button
+                    type="button"
+                    className="floor-focus-button"
+                    key={floorNumber}
+                    onClick={() => onNavigate?.(floorTarget(floorNumber))}
+                  >
+                    Floor {floorNumber}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {selectedProperty.type === "Virtual Floor" && (
+        <>
+          <div className="panel-type-badge floor-badge">BUILDING FLOOR</div>
+          <h2>{effectiveAddress} · Floor {selectedFloor}</h2>
+          <div className="panel-subtitle">{selectedProperty.buildingName || building?.name}</div>
+          <InfoRow label="Block" value={blockCode} />
+          <InfoRow label="Building" value={effectiveAddress} />
+          <InfoRow label="Floor" value={selectedFloor} />
+          <InfoRow label="Parent 2D ULPIN" value={selectedProperty.parentUlpIn} />
+          <InfoRow label="Vertical Range" value={selectedProperty.verticalRange} />
+          <InfoRow label="Apartments on Floor" value={effectiveUnitsPerFloor} />
+          <div className="inspection-tip floor-tip">
+            <strong>Step 2 of 2: choose an apartment</strong>
+            <span>Only apartments on Floor {selectedFloor} are now selectable on the 3D model.</span>
+          </div>
+          <div className="relationship-box unit-directory">
+            <div className="relationship-title">Floor {selectedFloor} → Apartments</div>
+            <div className="unit-chip-row large">
+              {Array.from({ length: effectiveUnitsPerFloor }, (_, index) => String.fromCharCode(65 + index)).map((letter) => (
+                <button
+                  type="button"
+                  className="unit-chip"
+                  key={letter}
+                  onClick={() => onNavigate?.(unitTarget(selectedFloor, letter))}
+                >
+                  {selectedFloor}-{letter}
+                </button>
+              ))}
+            </div>
+            <div className="switch-floor-row">
+              <span>Switch floor:</span>
+              <select
+                value={selectedFloor}
+                onChange={(event) => onNavigate?.(floorTarget(Number(event.target.value)))}
+              >
+                {Array.from({ length: effectiveFloors }, (_, index) => index + 1).map((floorNumber) => (
+                  <option key={floorNumber} value={floorNumber}>Floor {floorNumber}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedProperty.type === "Virtual Apartment" && (
+        <>
+          <div className="panel-type-badge apartment-badge">APARTMENT / 3D UNIT</div>
+          <h2>{effectiveAddress} · {selectedFloor}-{selectedUnitLetter}</h2>
+          <InfoRow label="Block" value={blockCode} />
+          <InfoRow label="Building" value={effectiveAddress} />
+          <InfoRow label="Floor" value={selectedFloor} />
+          <InfoRow label="Apartment" value={`${selectedFloor}-${selectedUnitLetter}`} />
+          <InfoRow label="Parent 2D ULPIN" value={selectedProperty.parentUlpIn} />
+          <InfoRow label="Vertical Range" value={selectedProperty.verticalRange} />
+          <InfoRow label="Proposed 3D ULPIN" value={selectedProperty.propertyId} />
+          <InfoRow label="Registry Status" value={selectedProperty.registryStatus || "Persisted in PostGIS"} />
+          <div className="ulpin-notice">
+            <strong>Unique linked 3D cadastral identity</strong>
+            <span>Each apartment has its own persisted child identifier, 2D footprint and vertical Z-range linked to the parent land-parcel ULPIN.</span>
+          </div>
+          <div className="relationship-box">
+            <div className="relationship-title">Cadastral Chain</div>
+            <div className="relationship-path horizontal-path">
+              <span>Block {blockCode}</span><b>›</b><span>{effectiveAddress}</span><b>›</b><span>F{selectedFloor}</span><b>›</b><span>{selectedFloor}-{selectedUnitLetter}</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {!["Township Block", "Land Parcel", "Building Footprint", "Virtual Floor", "Virtual Apartment"].includes(selectedProperty.type) && (
+        <>
+          <div className="panel-type-badge property-badge">3D PROPERTY</div>
+          <h2>Property Information</h2>
+          <InfoRow label="Type" value={selectedProperty.type} />
+          <InfoRow label="Block" value={selectedProperty.blockCode} />
+          <InfoRow label="Address" value={effectiveAddress} />
+          <InfoRow label="Parent Plot" value={plot?.name || "—"} />
+          <InfoRow label="Parent ULPIN" value={selectedProperty.parentUlpIn} />
+          <InfoRow label="Building" value={selectedProperty.building} />
+          <InfoRow label="Floor" value={selectedProperty.floor} />
+          <InfoRow label="Unit" value={selectedProperty.unit} />
+          <InfoRow label="Vertical Range" value={selectedProperty.verticalRange} />
+          <InfoRow label="Spatial ID" value={selectedProperty.propertyId} />
+          <InfoRow label="Validation" value={selectedProperty.validation} />
+        </>
+      )}
+
+      <SelectionLegend />
     </aside>
+  );
+}
+
+function SelectionLegend() {
+  return (
+    <div className="selection-legend">
+      <div className="selection-legend-title">Selection language</div>
+      <span><i className="selection-swatch block" /> Block</span>
+      <span><i className="selection-swatch plot" /> Plot</span>
+      <span><i className="selection-swatch building" /> Building</span>
+      <span><i className="selection-swatch floor" /> Floor</span>
+      <span><i className="selection-swatch apartment" /> Apartment</span>
+    </div>
   );
 }
 
