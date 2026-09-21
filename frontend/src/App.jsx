@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import CesiumViewer from "./cesium/CesiumViewer";
+import {
+  PRODUCT_NAME,
+  formatMeasurement,
+  formatVerticalRange,
+  formatVerticalRangeValue,
+  isApartmentBuilding,
+} from "./utils/cadastre";
 
 import {
   searchProperties,
@@ -60,15 +67,23 @@ function buildHierarchy(scene, gisData) {
         new Set(apartments.map((property) => property.floor).filter(Boolean))
       ).sort((a, b) => Number(a) - Number(b));
 
+      const supportsApartmentUnits = isApartmentBuilding(building);
       const floorCount =
-        storedFloors.length > 0 ? storedFloors.length : building.plannedFloors;
+        supportsApartmentUnits && storedFloors.length > 0
+          ? storedFloors.length
+          : building.plannedFloors;
+      const effectiveUnitsPerFloor = supportsApartmentUnits
+        ? Math.max(0, building.unitsPerFloor)
+        : 0;
 
       const virtualUnits = Array.from(
-        { length: Math.max(0, building.unitsPerFloor) },
+        { length: effectiveUnitsPerFloor },
         (_, index) => String.fromCharCode(65 + index)
       );
 
-      const unitsByFloor = storedFloors.length > 0
+      const unitsByFloor = !supportsApartmentUnits
+        ? []
+        : storedFloors.length > 0
         ? storedFloors.map((floor) => ({
             floor,
             units: apartments
@@ -81,13 +96,14 @@ function buildHierarchy(scene, gisData) {
             units: virtualUnits.map((letter) => `${index + 1}-${letter}`),
           }));
 
-      const registeredUnitCount =
-        String(building.buildingType || "").toLowerCase().includes("apartment")
-          ? floorCount * Math.max(0, building.unitsPerFloor)
-          : 0;
+      const registeredUnitCount = supportsApartmentUnits
+        ? floorCount * effectiveUnitsPerFloor
+        : 0;
 
       return {
         ...building,
+        supportsApartmentUnits,
+        unitsPerFloor: effectiveUnitsPerFloor,
         floorCount,
         propertyCount: properties.length,
         apartmentCount: apartments.length,
@@ -211,13 +227,16 @@ function hierarchyBuildingTarget(plot, building) {
 
 function hierarchyFloorTarget(plot, building, floorNumber) {
   const floorHeight = Number(building.floorHeight || 3.2);
+  const apartmentBuilding = isApartmentBuilding(building);
   return {
     ...hierarchyBuildingTarget(plot, building),
     result_type: "floor",
     target_type: "floor",
     target_id: `floor:${building.addressCode}:${floorNumber}`,
     title: `${building.addressCode} · Floor ${floorNumber}`,
-    subtitle: `${building.unitsPerFloor || 0} apartments · Block ${building.blockCode || plot.blockCode}`,
+    subtitle: apartmentBuilding
+      ? `${building.unitsPerFloor || 0} apartments · Block ${building.blockCode || plot.blockCode}`
+      : `Building floor · Block ${building.blockCode || plot.blockCode}`,
     floor: String(floorNumber),
     z_min: (floorNumber - 1) * floorHeight,
     z_max: floorNumber * floorHeight,
@@ -244,6 +263,10 @@ function hierarchyUnitTarget(plot, building, floorNumber, unitLetter) {
 function App() {
   const [selectedProperty, setSelectedProperty] = useState(null);
 
+  useEffect(() => {
+    document.title = `${PRODUCT_NAME} — 3D ULPIN & Vertical Property Mapping`;
+  }, []);
+
   const [hierarchy, setHierarchy] = useState({
     plots: [],
     blocks: [],
@@ -257,8 +280,8 @@ function App() {
   });
 
   const [layers, setLayers] = useState({
-    blocks: true,
-    parcels: true,
+    blocks: false,
+    parcels: false,
     buildings: true,
     roads: true,
     amenities: true,
@@ -299,7 +322,7 @@ function App() {
   function applyCityView() {
     setViewMode("city");
     setLayers((previous) => ({
-      ...previous, blocks: true, parcels: false, buildings: true, roads: true, amenities: true,
+      ...previous, blocks: false, parcels: false, buildings: true, roads: true, amenities: true,
       landscape: true, lights: true, markings: true, signals: true, mobility: true,
       apartments: false, parking: true, utilities: true,
     }));
@@ -487,7 +510,24 @@ function App() {
   }
 
   async function focusSearchResult(result) {
-    const targetType = result.target_type || result.result_type || "property";
+    const requestedTargetType = result.target_type || result.result_type || "property";
+    const hierarchyBuilding = hierarchy.plots
+      .flatMap((plot) => plot.buildings || [])
+      .find(
+        (item) =>
+          (result.address_code && item.addressCode === result.address_code) ||
+          (result.building_code && item.code === result.building_code)
+      );
+    const apartmentTarget = isApartmentBuilding(
+      hierarchyBuilding || {
+        building_type: result.building_type,
+        building_name: result.building_name || result.subtitle,
+      }
+    );
+    let targetType =
+      requestedTargetType === "unit" && !apartmentTarget
+        ? "floor"
+        : requestedTargetType;
     let resolved = { ...result };
 
     // Any apartment navigation path (search result or right-panel chip)
@@ -536,6 +576,17 @@ function App() {
       }
     }
 
+    if (
+      targetType === "unit" &&
+      !isApartmentBuilding({
+        building_type: resolved.building_type,
+        building_name: resolved.building_name || resolved.subtitle,
+      }) &&
+      Number(resolved.units_per_floor || 0) <= 1
+    ) {
+      targetType = "floor";
+    }
+
     const zMin = Number(resolved.z_min);
     const zMax = Number(resolved.z_max);
 
@@ -565,9 +616,9 @@ function App() {
       heightMeters: Number(resolved.height_m || 0),
       verticalRange:
         Number.isFinite(zMin) && Number.isFinite(zMax)
-          ? `${zMin}m – ${zMax}m`
+          ? formatVerticalRange(zMin, zMax)
           : resolved.height_m
-            ? `0m – ${resolved.height_m}m`
+            ? formatVerticalRange(0, resolved.height_m)
             : "—",
       validation: resolved.validation || "Township address index",
       plotName: resolved.plot_name || "—",
@@ -577,8 +628,18 @@ function App() {
       registryStatus: resolved.registry_status || (targetType === "unit" ? "Persisted in PostGIS" : undefined),
     });
 
+    const mapTarget = {
+      ...resolved,
+      target_type: targetType,
+      result_type: targetType,
+      units_per_floor:
+        targetType === "unit" || isApartmentBuilding(hierarchyBuilding)
+          ? resolved.units_per_floor
+          : 0,
+    };
+
     setMapSearchText(resolved.target_id || resolved.property_id || resolved.address_code || "");
-    setMapSearchTarget(resolved);
+    setMapSearchTarget(mapTarget);
     setSearchTrigger((value) => value + 1);
     setSearchResults([]);
     setSearchMessage(`Focused on ${resolved.title || resolved.address_code || resolved.property_id}`);
@@ -600,6 +661,16 @@ function App() {
 
     if (selection.type !== "Virtual Apartment") {
       setSelectedProperty(selection);
+      return;
+    }
+
+    if (!isApartmentBuilding(selection)) {
+      setSelectedProperty({
+        ...selection,
+        type: "Virtual Floor",
+        unit: "—",
+        unitsPerFloor: 0,
+      });
       return;
     }
 
@@ -632,7 +703,7 @@ function App() {
         floorCount: Number(registered.floors || selection.floorCount || 0),
         floorHeight: Number(registered.floor_height || selection.floorHeight || 0),
         heightMeters: Number(registered.height_m || selection.heightMeters || 0),
-        verticalRange: `${registered.z_min}m – ${registered.z_max}m`,
+        verticalRange: formatVerticalRange(registered.z_min, registered.z_max),
         validation: registered.validation || selection.validation,
         registryStatus: registered.registry_status || "Persisted in PostGIS",
         plotName: registered.plot_name || selection.plotName,
@@ -847,7 +918,7 @@ function App() {
 
   async function handleGenerateDemoColony() {
     const confirmed = window.confirm(
-      "Generate Bhumi3D Township V3 Step 3.7A registered 3D apartment cadastre + final interaction/visual upgrades?\n\n" +
+      `Generate ${PRODUCT_NAME} Township V3 registered 3D apartment cadastre and final scene?\n\n` +
         "This replaces the current demo parcels, buildings and 3D properties. " +
         "Your code is not changed."
     );
@@ -1105,7 +1176,7 @@ function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-title">Bhumi3D</div>
+          <div className="brand-title">{PRODUCT_NAME}</div>
           <div className="brand-subtitle">
             3D ULPIN & Vertical Property Mapping
           </div>
@@ -1236,7 +1307,11 @@ function App() {
                     <div className="search-result-meta">
                       {result.block_code && <span>Block {result.block_code}</span>}
                       {result.floors > 0 && <span>{result.floors} floors</span>}
-                      {result.units_per_floor > 1 && (
+                      {result.units_per_floor > 1 &&
+                        isApartmentBuilding({
+                          building_type: result.building_type,
+                          building_name: result.building_name || result.subtitle,
+                        }) && (
                         <span>{result.units_per_floor} apartments / floor</span>
                       )}
                     </div>
@@ -1327,7 +1402,7 @@ function App() {
                                   <strong>↳ {building.addressCode}</strong>
                                   <span>
                                     {building.code} · {building.floorCount} floors
-                                    {building.unitsPerFloor > 1
+                                    {isApartmentBuilding(building) && building.unitsPerFloor > 1
                                       ? ` · ${building.unitsPerFloor} units/floor`
                                       : ""}
                                   </span>
@@ -1359,6 +1434,7 @@ function App() {
 
                                     {Number.isFinite(selectedFloorNumber) &&
                                       selectedFloorNumber > 0 &&
+                                      isApartmentBuilding(building) &&
                                       building.unitsPerFloor > 0 && (
                                         <div className="hierarchy-unit-drilldown">
                                           <div className="hierarchy-drilldown-label">Floor {selectedFloorNumber} apartments</div>
@@ -1543,7 +1619,7 @@ function App() {
           </section>
         </aside>
 
-        <section className="map-area">
+        <section className={`map-area map-mode-${viewMode}`}>
           <div className="scene-summary">
             <SummaryItem value={hierarchy.totals.plots} label="Plots" />
             <SummaryItem
@@ -1559,10 +1635,20 @@ function App() {
 
           <div className="camera-controls">
             <div className="view-mode-row">
-              <button className={viewMode === "city" ? "view-mode-button active" : "view-mode-button"} onClick={applyCityView}>
+              <button
+                className={viewMode === "city" ? "view-mode-button active" : "view-mode-button"}
+                onClick={applyCityView}
+                aria-pressed={viewMode === "city"}
+                title="Presentation view with architecture and public realm"
+              >
                 City View
               </button>
-              <button className={viewMode === "cadastral" ? "view-mode-button active" : "view-mode-button"} onClick={applyCadastralView}>
+              <button
+                className={viewMode === "cadastral" ? "view-mode-button active" : "view-mode-button"}
+                onClick={applyCadastralView}
+                aria-pressed={viewMode === "cadastral"}
+                title="Technical view with plots, blocks, floors and 3D units"
+              >
                 Cadastral View
               </button>
             </div>
@@ -1586,7 +1672,7 @@ function App() {
             </div>
 
             <div className="camera-help">
-              City View emphasizes the built township. Click a building to reveal its floors, click a floor to reveal its apartments, and click an apartment to read its cadastral information. Double-click keeps the building as the camera orbit pivot.
+              City View emphasizes the built township. Click a building to reveal its floors. Apartment towers continue to individual units; civic, commercial and house records stop at the floor. Double-click keeps the building as the camera orbit pivot.
             </div>
           </div>
 
@@ -1717,7 +1803,7 @@ function App() {
               onSubmit={handleCreateBuilding}
             >
               <div className="prototype-notice">
-                <strong>Bhumi3D Building Creator V2</strong>
+                <strong>{PRODUCT_NAME} Building Creator</strong>
                 <span>
                   Draw a real polygon with 3 or more map points. PostGIS
                   validates polygon geometry, parent-plot containment, and
@@ -2210,7 +2296,7 @@ function App() {
               <div className="prototype-notice">
                 <strong>Automatic Multi-Building Workflow</strong>
                 <span>
-                  Bhumi3D spatially assigns buildings to containing land
+                  {PRODUCT_NAME} spatially assigns buildings to containing land
                   plots, skips duplicates, rejects buildings outside
                   their parent plots, generates vertical parcels and
                   stores the results in PostGIS.
@@ -2341,6 +2427,14 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
   const block = (hierarchy.blocks || []).find(
     (item) => item.code === selectedProperty.blockCode
   );
+  const apartmentBuilding = isApartmentBuilding({
+    buildingType: selectedProperty.buildingType || building?.buildingType,
+    buildingName: selectedProperty.buildingName || building?.name,
+  });
+  const selectedType =
+    selectedProperty.type === "Virtual Apartment" && !apartmentBuilding
+      ? "Virtual Floor"
+      : selectedProperty.type;
 
   const effectiveAddress =
     selectedProperty.addressCode && selectedProperty.addressCode !== "—"
@@ -2349,9 +2443,9 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
   const effectiveFloors = Number(
     selectedProperty.floorCount || building?.floorCount || 0
   );
-  const effectiveUnitsPerFloor = Number(
-    selectedProperty.unitsPerFloor || building?.unitsPerFloor || 0
-  );
+  const effectiveUnitsPerFloor = apartmentBuilding
+    ? Number(selectedProperty.unitsPerFloor || building?.unitsPerFloor || 0)
+    : 0;
   const effectiveFloorHeight = Number(
     selectedProperty.floorHeight || building?.floorHeight || 3.2
   );
@@ -2410,7 +2504,9 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
       target_type: "floor",
       target_id: `floor:${effectiveAddress}:${floorNumber}`,
       title: `${effectiveAddress} · Floor ${floorNumber}`,
-      subtitle: `${effectiveUnitsPerFloor} apartments · Block ${blockCode}`,
+      subtitle: apartmentBuilding
+        ? `${effectiveUnitsPerFloor} apartments · Block ${blockCode}`
+        : `Building floor · Block ${blockCode}`,
       floor: String(floorNumber),
       z_min: (floorNumber - 1) * effectiveFloorHeight,
       z_max: floorNumber * effectiveFloorHeight,
@@ -2450,18 +2546,18 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
   if (Number.isFinite(selectedFloor) && selectedFloor > 0) {
     breadcrumbs.push({ label: `Floor ${selectedFloor}`, target: floorTarget(selectedFloor) });
   }
-  if (selectedProperty.type === "Virtual Apartment" && selectedUnitLetter) {
+  if (selectedType === "Virtual Apartment" && selectedUnitLetter) {
     breadcrumbs.push({ label: `${selectedFloor}-${selectedUnitLetter}`, target: unitTarget(selectedFloor, selectedUnitLetter) });
   }
 
   const upTarget =
-    selectedProperty.type === "Virtual Apartment"
+    selectedType === "Virtual Apartment"
       ? floorTarget(selectedFloor)
-      : selectedProperty.type === "Virtual Floor"
+      : selectedType === "Virtual Floor"
         ? buildingTarget()
-        : selectedProperty.type === "Building Footprint"
+        : selectedType === "Building Footprint"
           ? plotTarget()
-          : selectedProperty.type === "Land Parcel"
+          : selectedType === "Land Parcel"
             ? blockTarget()
             : null;
 
@@ -2499,7 +2595,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
         )}
       </div>
 
-      {selectedProperty.type === "Township Block" && (
+      {selectedType === "Township Block" && (
         <>
           <div className="panel-type-badge block-badge">TOWNSHIP BLOCK</div>
           <h2>Block {blockCode}</h2>
@@ -2510,7 +2606,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
         </>
       )}
 
-      {selectedProperty.type === "Land Parcel" && (
+      {selectedType === "Land Parcel" && (
         <>
           <div className="panel-type-badge plot-badge">LAND PLOT</div>
           <h2>{plot?.name || selectedProperty.plotName || "Land Plot"}</h2>
@@ -2555,7 +2651,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
         </>
       )}
 
-      {selectedProperty.type === "Building Footprint" && (
+      {selectedType === "Building Footprint" && (
         <>
           <div className="panel-type-badge building-badge">BUILDING</div>
           <h2>{effectiveAddress}</h2>
@@ -2567,12 +2663,29 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
           <InfoRow label="Parent Plot" value={plot?.name || selectedProperty.plotName || "—"} />
           <InfoRow label="Parent 2D ULPIN" value={selectedProperty.parentUlpIn} />
           <InfoRow label="Floors" value={effectiveFloors} />
-          <InfoRow label="Apartments / Floor" value={effectiveUnitsPerFloor > 0 ? effectiveUnitsPerFloor : "—"} />
-          <InfoRow label="Registered 3D Units" value={effectiveUnitsPerFloor > 0 ? effectiveFloors * effectiveUnitsPerFloor : "—"} />
-          <InfoRow label="Height" value={selectedProperty.heightMeters ? `${selectedProperty.heightMeters} m` : building?.heightMeters ? `${building.heightMeters} m` : "—"} />
+          {apartmentBuilding ? (
+            <>
+              <InfoRow label="Apartments / Floor" value={effectiveUnitsPerFloor || "—"} />
+              <InfoRow label="Registered 3D Units" value={effectiveUnitsPerFloor > 0 ? effectiveFloors * effectiveUnitsPerFloor : "—"} />
+            </>
+          ) : (
+            <InfoRow label="Vertical Subdivision" value="Floors only (no apartment units)" />
+          )}
+          <InfoRow
+            label="Height"
+            value={
+              selectedProperty.heightMeters || building?.heightMeters
+                ? `${formatMeasurement(selectedProperty.heightMeters || building?.heightMeters)} m`
+                : "—"
+            }
+          />
           <div className="inspection-tip building-tip">
-            <strong>Step 1 of 2: choose a floor</strong>
-            <span>Apartments remain hidden until a floor is selected.</span>
+            <strong>{apartmentBuilding ? "Step 1 of 2: choose a floor" : "Choose a floor"}</strong>
+            <span>
+              {apartmentBuilding
+                ? "Apartments remain hidden until a floor is selected."
+                : "This building is recorded by floor; apartment units are not generated."}
+            </span>
           </div>
           {effectiveFloors > 0 && (
             <div className="relationship-box floor-directory">
@@ -2594,7 +2707,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
         </>
       )}
 
-      {selectedProperty.type === "Virtual Floor" && (
+      {selectedType === "Virtual Floor" && (
         <>
           <div className="panel-type-badge floor-badge">BUILDING FLOOR</div>
           <h2>{effectiveAddress} · Floor {selectedFloor}</h2>
@@ -2603,26 +2716,40 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
           <InfoRow label="Building" value={effectiveAddress} />
           <InfoRow label="Floor" value={selectedFloor} />
           <InfoRow label="Parent 2D ULPIN" value={selectedProperty.parentUlpIn} />
-          <InfoRow label="Vertical Range" value={selectedProperty.verticalRange} />
-          <InfoRow label="Apartments on Floor" value={effectiveUnitsPerFloor} />
+          <InfoRow label="Vertical Range" value={formatVerticalRangeValue(selectedProperty.verticalRange)} />
+          {apartmentBuilding ? (
+            <InfoRow label="Apartments on Floor" value={effectiveUnitsPerFloor} />
+          ) : (
+            <InfoRow label="Subdivision" value="Floor record (no apartment units)" />
+          )}
           <div className="inspection-tip floor-tip">
-            <strong>Step 2 of 2: choose an apartment</strong>
-            <span>Only apartments on Floor {selectedFloor} are now selectable on the 3D model.</span>
+            <strong>{apartmentBuilding ? "Step 2 of 2: choose an apartment" : "Floor selected"}</strong>
+            <span>
+              {apartmentBuilding
+                ? `Only apartments on Floor ${selectedFloor} are now selectable on the 3D model.`
+                : `Floor ${selectedFloor} is the final selectable cadastral level for this building.`}
+            </span>
           </div>
           <div className="relationship-box unit-directory">
-            <div className="relationship-title">Floor {selectedFloor} → Apartments</div>
-            <div className="unit-chip-row large">
-              {Array.from({ length: effectiveUnitsPerFloor }, (_, index) => String.fromCharCode(65 + index)).map((letter) => (
-                <button
-                  type="button"
-                  className="unit-chip"
-                  key={letter}
-                  onClick={() => onNavigate?.(unitTarget(selectedFloor, letter))}
-                >
-                  {selectedFloor}-{letter}
-                </button>
-              ))}
-            </div>
+            {apartmentBuilding ? (
+              <>
+                <div className="relationship-title">Floor {selectedFloor} → Apartments</div>
+                <div className="unit-chip-row large">
+                  {Array.from({ length: effectiveUnitsPerFloor }, (_, index) => String.fromCharCode(65 + index)).map((letter) => (
+                    <button
+                      type="button"
+                      className="unit-chip"
+                      key={letter}
+                      onClick={() => onNavigate?.(unitTarget(selectedFloor, letter))}
+                    >
+                      {selectedFloor}-{letter}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="relationship-title">Floor navigation</div>
+            )}
             <div className="switch-floor-row">
               <span>Switch floor:</span>
               <select
@@ -2638,7 +2765,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
         </>
       )}
 
-      {selectedProperty.type === "Virtual Apartment" && (
+      {selectedType === "Virtual Apartment" && apartmentBuilding && (
         <>
           <div className="panel-type-badge apartment-badge">APARTMENT / 3D UNIT</div>
           <h2>{effectiveAddress} · {selectedFloor}-{selectedUnitLetter}</h2>
@@ -2647,7 +2774,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
           <InfoRow label="Floor" value={selectedFloor} />
           <InfoRow label="Apartment" value={`${selectedFloor}-${selectedUnitLetter}`} />
           <InfoRow label="Parent 2D ULPIN" value={selectedProperty.parentUlpIn} />
-          <InfoRow label="Vertical Range" value={selectedProperty.verticalRange} />
+          <InfoRow label="Vertical Range" value={formatVerticalRangeValue(selectedProperty.verticalRange)} />
           <InfoRow label="Proposed 3D ULPIN" value={selectedProperty.propertyId} />
           <InfoRow label="Registry Status" value={selectedProperty.registryStatus || "Persisted in PostGIS"} />
           <div className="ulpin-notice">
@@ -2663,11 +2790,11 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
         </>
       )}
 
-      {!["Township Block", "Land Parcel", "Building Footprint", "Virtual Floor", "Virtual Apartment"].includes(selectedProperty.type) && (
+      {!["Township Block", "Land Parcel", "Building Footprint", "Virtual Floor", "Virtual Apartment"].includes(selectedType) && (
         <>
           <div className="panel-type-badge property-badge">3D PROPERTY</div>
           <h2>Property Information</h2>
-          <InfoRow label="Type" value={selectedProperty.type} />
+          <InfoRow label="Type" value={selectedType} />
           <InfoRow label="Block" value={selectedProperty.blockCode} />
           <InfoRow label="Address" value={effectiveAddress} />
           <InfoRow label="Parent Plot" value={plot?.name || "—"} />
@@ -2675,7 +2802,7 @@ function PropertyInformation({ selectedProperty, hierarchy, onNavigate, onClose 
           <InfoRow label="Building" value={selectedProperty.building} />
           <InfoRow label="Floor" value={selectedProperty.floor} />
           <InfoRow label="Unit" value={selectedProperty.unit} />
-          <InfoRow label="Vertical Range" value={selectedProperty.verticalRange} />
+          <InfoRow label="Vertical Range" value={formatVerticalRangeValue(selectedProperty.verticalRange)} />
           <InfoRow label="Spatial ID" value={selectedProperty.propertyId} />
           <InfoRow label="Validation" value={selectedProperty.validation} />
         </>

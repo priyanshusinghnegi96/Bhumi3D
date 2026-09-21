@@ -24,6 +24,7 @@ import {
   HeadingPitchRoll,
   Transforms,
   ImageMaterialProperty,
+  BoundingSphere,
 } from "cesium";
 
 import {
@@ -33,6 +34,10 @@ import {
   validateTopology,
   validateCadastral,
 } from "../services/api";
+import {
+  formatVerticalRange,
+  isApartmentBuilding,
+} from "../utils/cadastre";
 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
@@ -68,6 +73,12 @@ function CesiumViewer({
 
   const viewerRef =
     useRef(null);
+
+  const viewModeRef =
+    useRef(viewMode);
+
+  const layersRef =
+    useRef(layers);
 
 
   const townshipBoundsRef =
@@ -214,6 +225,26 @@ function CesiumViewer({
 
   useEffect(() => {
 
+    viewModeRef.current =
+      viewMode;
+
+  }, [
+    viewMode,
+  ]);
+
+
+  useEffect(() => {
+
+    layersRef.current =
+      layers;
+
+  }, [
+    layers,
+  ]);
+
+
+  useEffect(() => {
+
     onSelectRef.current =
       onSelect;
 
@@ -273,6 +304,68 @@ function CesiumViewer({
 
     return (
       `${parentUlpIn}::${building}`
+    );
+  }
+
+
+  function isCityLandmarkBuilding(buildingType) {
+    const normalized = String(buildingType || "").toLowerCase();
+
+    return [
+      "hospital",
+      "school",
+      "shopping",
+      "market",
+      "gym",
+      "fitness",
+      "administration",
+      "community",
+      "clubhouse",
+      "daycare",
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+
+  function townshipMetrics(bounds) {
+    if (!bounds) {
+      return { widthMeters: 0, depthMeters: 0, diagonalMeters: 0 };
+    }
+
+    const centerLatitude = (bounds.minLat + bounds.maxLat) / 2;
+    const widthMeters = Math.abs(bounds.maxLon - bounds.minLon) *
+      111320 * Math.max(0.25, Math.cos(CesiumMath.toRadians(centerLatitude)));
+    const depthMeters = Math.abs(bounds.maxLat - bounds.minLat) * 111320;
+
+    return {
+      widthMeters,
+      depthMeters,
+      diagonalMeters: Math.hypot(widthMeters, depthMeters),
+    };
+  }
+
+
+  function flyToTownship(viewer, bounds, duration = 1.15) {
+    if (!viewer || !bounds) return;
+
+    const { diagonalMeters } = townshipMetrics(bounds);
+    const radius = Math.max(130, diagonalMeters * 0.52);
+    const range = Math.max(720, diagonalMeters * 1.18);
+    const center = Cartesian3.fromDegrees(
+      bounds.centerLon,
+      bounds.centerLat,
+      0
+    );
+
+    viewer.camera.flyToBoundingSphere(
+      new BoundingSphere(center, radius),
+      {
+        offset: new HeadingPitchRange(
+          CesiumMath.toRadians(28),
+          CesiumMath.toRadians(-38),
+          range
+        ),
+        duration,
+      }
     );
   }
 
@@ -929,10 +1022,27 @@ function CesiumViewer({
         .values()
     ) {
 
+      const buildingsVisible =
+        layersRef.current?.buildings !== false;
+
+      const normalizedBuildingType =
+        String(building.buildingType || "").toLowerCase();
+
+      const normalLabelVisible =
+        buildingsVisible &&
+        !normalizedBuildingType.includes("residential house") &&
+        (
+          viewModeRef.current === "cadastral" ||
+          isCityLandmarkBuilding(building.buildingType)
+        );
+
       for (
         const footprint
         of building.footprints
       ) {
+
+        footprint.show =
+          buildingsVisible;
 
         setValidation(
           footprint,
@@ -946,6 +1056,9 @@ function CesiumViewer({
         of building.slabs
       ) {
 
+        slab.show =
+          buildingsVisible;
+
         setValidation(
           slab,
           "GIS source"
@@ -958,9 +1071,15 @@ function CesiumViewer({
         of building.labels
       ) {
 
+        labelEntity.show =
+          buildingsVisible;
+
         if (
           labelEntity.label
         ) {
+
+          labelEntity.label.show =
+            normalLabelVisible;
 
           labelEntity
             .label
@@ -1030,10 +1149,14 @@ function CesiumViewer({
 
       for (const footprint of building.footprints || []) {
         if (!footprint?.polygon) continue;
-        footprint.polygon.material = Color.fromCssColorString("#aab2b0").withAlpha(0.26);
-        footprint.polygon.outlineColor = Color.fromCssColorString("#87918d").withAlpha(0.25);
+        footprint.polygon.material = Color.fromCssColorString("#aab2b0").withAlpha(0.14);
+        footprint.polygon.outlineColor = Color.fromCssColorString("#87918d").withAlpha(0.16);
+      }
+      for (const slab of building.slabs || []) {
+        slab.show = false;
       }
       for (const labelEntity of building.labels || []) {
+        labelEntity.show = false;
         if (labelEntity?.label) {
           labelEntity.label.fillColor = Color.WHITE.withAlpha(0.22);
         }
@@ -1046,11 +1169,13 @@ function CesiumViewer({
 
     for (const footprint of building.footprints || []) {
       if (!footprint?.polygon) continue;
+      footprint.show = true;
       footprint.polygon.material = Color.fromCssColorString("#2563eb").withAlpha(0.86);
       footprint.polygon.outlineColor = Color.fromCssColorString("#bfdbfe");
     }
 
     for (const slab of building.slabs || []) {
+      slab.show = true;
       if (slab?.polygon) {
         slab.polygon.material = Color.fromCssColorString("#60a5fa").withAlpha(0.22);
         slab.polygon.outlineColor = Color.fromCssColorString("#dbeafe").withAlpha(0.72);
@@ -1058,7 +1183,9 @@ function CesiumViewer({
     }
 
     for (const labelEntity of building.labels || []) {
+      labelEntity.show = true;
       if (labelEntity?.label) {
+        labelEntity.label.show = true;
         labelEntity.label.fillColor = Color.fromCssColorString("#dbeafe");
       }
     }
@@ -1247,7 +1374,7 @@ function CesiumViewer({
       buildingName: building.buildingName,
       buildingType: building.buildingType,
       floorCount: building.floors,
-      unitsPerFloor: building.unitsPerFloor,
+      unitsPerFloor: isApartmentBuilding(building) ? building.unitsPerFloor : 0,
       floorHeight: building.floorHeight,
       heightMeters: building.totalHeight,
     };
@@ -1312,7 +1439,7 @@ function CesiumViewer({
             type: "Virtual Floor",
             floor: floorNumber,
             propertyId: virtualFloorId(building, floorNumber),
-            verticalRange: `${zMin.toFixed(2)}m – ${zMax.toFixed(2)}m`,
+            verticalRange: formatVerticalRange(zMin, zMax),
           }),
         });
 
@@ -1339,13 +1466,13 @@ function CesiumViewer({
     const floorCount = Math.max(0, Number(building.floors || 0));
     const floorHeight = Math.max(0.1, Number(building.floorHeight || 3.2));
     const unitsPerFloor = Math.max(0, Number(building.unitsPerFloor || 0));
+    const apartmentBuilding = isApartmentBuilding(building);
     const safeFloor = Number(floorNumber);
 
     if (
       !Number.isFinite(safeFloor) ||
       safeFloor < 1 ||
-      safeFloor > floorCount ||
-      unitsPerFloor < 1
+      safeFloor > floorCount
     ) {
       return false;
     }
@@ -1359,6 +1486,14 @@ function CesiumViewer({
     if (selectedFloorEntity?.polygon) {
       selectedFloorEntity.polygon.material = Color.fromCssColorString("#f59e0b").withAlpha(0.42);
       selectedFloorEntity.polygon.outlineColor = Color.fromCssColorString("#fed7aa");
+    }
+
+    // Civic, commercial and individual-home buildings stop at the floor
+    // level. Never synthesize apartment cells merely because the source
+    // data happens to contain a default units_per_floor value.
+    if (!apartmentBuilding || unitsPerFloor < 1) {
+      applyInspectionBuildingStyle(building);
+      return true;
     }
 
     const bounds = building.bounds;
@@ -1430,12 +1565,35 @@ function CesiumViewer({
             : Color.fromCssColorString("#e0e7ff").withAlpha(0.88),
           distanceDisplayCondition: new DistanceDisplayCondition(0, Math.max(220, Number(building.totalHeight || 20) * 6.5)),
         },
+        position: isSelected
+          ? Cartesian3.fromDegrees(
+              (minLon + maxLon) / 2,
+              (minLat + maxLat) / 2,
+              zMax + 1.25
+            )
+          : undefined,
+        label: isSelected
+          ? {
+              text: `${building.addressCode} · ${displayUnit}`,
+              font: "bold 15px sans-serif",
+              fillColor: Color.fromCssColorString("#fdf4ff"),
+              outlineColor: Color.fromCssColorString("#86198f"),
+              outlineWidth: 5,
+              style: LabelStyle.FILL_AND_OUTLINE,
+              verticalOrigin: VerticalOrigin.BOTTOM,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              distanceDisplayCondition: new DistanceDisplayCondition(
+                0,
+                Math.max(240, Number(building.totalHeight || 20) * 7)
+              ),
+            }
+          : undefined,
         properties: inspectionProperties(building, {
           type: "Virtual Apartment",
           floor: safeFloor,
           unit: displayUnit,
           propertyId: spatialId,
-          verticalRange: `${zMin.toFixed(2)}m – ${zMax.toFixed(2)}m`,
+          verticalRange: formatVerticalRange(zMin, zMax),
         }),
       });
 
@@ -2031,21 +2189,42 @@ function CesiumViewer({
     cameraController.enableZoom = true;
     cameraController.minimumZoomDistance = 3;
     cameraController.maximumZoomDistance = 6000;
+    // One calmer interaction step: cap large pointer deltas and shorten
+    // inertial movement without making navigation feel sluggish.
+    cameraController.maximumMovementRatio = 0.075;
+    cameraController.inertiaSpin = 0.82;
+    cameraController.inertiaTranslate = 0.82;
+    cameraController.inertiaZoom = 0.75;
 
 
+    // The WebGL canvas stays transparent beyond the globe so the CSS
+    // atmosphere can blend smoothly into the generated regional context.
     viewer.scene.backgroundColor =
-      Color.fromCssColorString("#b7cbd2");
+      Color.TRANSPARENT;
+
+    viewer.resolutionScale = Math.min(
+      Number(window.devicePixelRatio || 1),
+      1.35
+    );
 
     if (viewer.scene.globe) {
-      viewer.scene.globe.baseColor = Color.fromCssColorString("#6d8064");
+      viewer.scene.globe.baseColor = Color.fromCssColorString("#687a61");
       viewer.scene.globe.showGroundAtmosphere = true;
       viewer.scene.globe.depthTestAgainstTerrain = false;
+      viewer.scene.globe.maximumScreenSpaceError = 2.4;
+    }
+
+    if (viewer.scene.skyAtmosphere) {
+      viewer.scene.skyAtmosphere.show = true;
+      viewer.scene.skyAtmosphere.hueShift = -0.025;
+      viewer.scene.skyAtmosphere.saturationShift = -0.08;
+      viewer.scene.skyAtmosphere.brightnessShift = 0.06;
     }
 
     if (viewer.scene.fog) {
       viewer.scene.fog.enabled = true;
-      viewer.scene.fog.density = 0.00018;
-      viewer.scene.fog.minimumBrightness = 0.55;
+      viewer.scene.fog.density = 0.00014;
+      viewer.scene.fog.minimumBrightness = 0.64;
     }
 
     viewer.scene.highDynamicRange = false;
@@ -2172,14 +2351,14 @@ function CesiumViewer({
 
 
           const normalMaterial =
-            Color.LIMEGREEN
+            Color.fromCssColorString("#4ade80")
               .withAlpha(
-                0.26
+                0.10
               );
 
 
           const normalOutline =
-            Color.DARKGREEN;
+            Color.fromCssColorString("#15803d").withAlpha(0.82);
 
 
           const entity =
@@ -2407,14 +2586,15 @@ function CesiumViewer({
             ),
             show: layers.blocks,
             label: {
+              show: viewModeRef.current === "cadastral",
               text: `BLOCK ${blockCode}`,
-              font: "700 14px sans-serif",
+              font: "700 15px sans-serif",
               fillColor: Color.WHITE,
               outlineColor: color,
               outlineWidth: 4,
               style: LabelStyle.FILL_AND_OUTLINE,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              distanceDisplayCondition: new DistanceDisplayCondition(220, 900),
+              distanceDisplayCondition: new DistanceDisplayCondition(130, 2200),
             },
           });
 
@@ -2475,7 +2655,7 @@ function CesiumViewer({
                   material: roadMaterial,
                   outline: true,
                   outlineColor:
-                    Color.fromCssColorString("#c7c9c8"),
+                    Color.fromCssColorString("#737b7c").withAlpha(0.58),
                 },
 
                 properties: {
@@ -2513,7 +2693,7 @@ function CesiumViewer({
                 extrudedHeight: 0.58,
                 material: Color.fromCssColorString("#477a49").withAlpha(0.98),
                 outline: true,
-                outlineColor: Color.fromCssColorString("#d7dccf"),
+                outlineColor: Color.fromCssColorString("#aab6a6").withAlpha(0.72),
               },
               properties: {
                 type: "Landscaped Road Median",
@@ -2546,9 +2726,9 @@ function CesiumViewer({
                 hierarchy: new PolygonHierarchy(positions),
                 height: isGreenStrip ? 0.46 : 0.47,
                 extrudedHeight: isGreenStrip ? 0.57 : 0.54,
-                material: Color.fromCssColorString(isGreenStrip ? "#638b57" : "#c9c3b7").withAlpha(0.99),
+                material: Color.fromCssColorString(isGreenStrip ? "#5f8757" : "#bbb8ae").withAlpha(0.99),
                 outline: true,
-                outlineColor: Color.fromCssColorString(isGreenStrip ? "#405f39" : "#8f8a80"),
+                outlineColor: Color.fromCssColorString(isGreenStrip ? "#405f39" : "#85847d").withAlpha(0.72),
               },
               properties: {
                 type: isGreenStrip ? "Landscaped Verge" : "Sidewalk",
@@ -2571,18 +2751,18 @@ function CesiumViewer({
             const isRegionalContext = assetType === "regional_context_ground";
             const isGreenBelt = assetType === "green_belt";
 
-            let materialColor = "#7f8f75";
+            let materialColor = "#788d75";
             let materialAlpha = 0.97;
             let height = 0.025;
             let extrudedHeight = 0.055;
 
             if (isGreenBelt) {
-              materialColor = "#496f43";
+              materialColor = "#456d42";
               materialAlpha = 0.98;
               height = 0.11;
               extrudedHeight = 0.17;
             } else if (isRegionalContext) {
-              materialColor = "#708268";
+              materialColor = "#687a61";
               materialAlpha = 1.0;
               height = -0.20;
               extrudedHeight = -0.12;
@@ -3603,23 +3783,6 @@ function CesiumViewer({
               }));
             }
 
-            if (isGym || isSchool) {
-              parts.push(viewer.entities.add({
-                position: Cartesian3.fromDegrees(longitude, latitude - 0.000004, canopyHeight + 0.60),
-                show: layers.buildings,
-                label: {
-                  text: isGym ? "FITNESS CLUB" : "SCHOOL",
-                  font: "bold 13px sans-serif",
-                  fillColor: Color.WHITE,
-                  outlineColor: Color.fromCssColorString("#26312d"),
-                  outlineWidth: 3,
-                  style: LabelStyle.FILL_AND_OUTLINE,
-                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                  distanceDisplayCondition: detailDistance,
-                },
-              }));
-            }
-
             layerEntitiesRef.current.buildings.push(...parts);
             continue;
           }
@@ -3876,7 +4039,7 @@ function CesiumViewer({
               position: Cartesian3.fromDegrees(longitude, gateLat - 0.000004, height + 0.15),
               show: layers.landscape,
               label: {
-                text: "CADASTRAX3D  TOWNSHIP",
+                text: "CadastraX3D  TOWNSHIP",
                 font: "bold 18px sans-serif",
                 style: LabelStyle.FILL_AND_OUTLINE,
                 fillColor: Color.fromCssColorString("#f0d893"),
@@ -4098,7 +4261,7 @@ function CesiumViewer({
                   show: layers.amenities,
                   label: {
                     text: asset.name,
-                    font: "bold 11px sans-serif",
+                    font: "700 10px sans-serif",
                     style: LabelStyle.FILL_AND_OUTLINE,
                     fillColor: Color.WHITE,
                     outlineColor: Color.BLACK,
@@ -4107,7 +4270,7 @@ function CesiumViewer({
                     disableDepthTestDistance:
                       Number.POSITIVE_INFINITY,
                     distanceDisplayCondition:
-                      new DistanceDisplayCondition(0, 700),
+                      new DistanceDisplayCondition(0, 285),
                   },
                 });
 
@@ -4534,8 +4697,16 @@ function CesiumViewer({
           const addressNumber =
             Number(feature.properties?.address_number || 0);
 
-          const unitsPerFloor =
-            Number(feature.properties?.units_per_floor || 0);
+          const buildingName = feature.name || `Building ${addressCode}`;
+
+          const supportsApartmentUnits = isApartmentBuilding({
+            buildingType,
+            buildingName,
+          });
+
+          const unitsPerFloor = supportsApartmentUnits
+            ? Number(feature.properties?.units_per_floor || 0)
+            : 0;
 
 
           const buildingTypeLower =
@@ -4635,12 +4806,13 @@ function CesiumViewer({
                   footprintPositions: null,
                   floors,
                   unitsPerFloor,
+                  supportsApartmentUnits,
                   floorHeight,
                   blockCode,
                   addressCode,
                   addressNumber,
                   buildingCode,
-                  buildingName: feature.name,
+                  buildingName,
                   buildingType,
                   parentUlpIn,
                 }
@@ -4761,8 +4933,7 @@ function CesiumViewer({
                   addressNumber:
                     addressNumber,
 
-                  buildingName:
-                    feature.name,
+                  buildingName,
 
                   buildingType:
                     buildingType,
@@ -5131,7 +5302,7 @@ function CesiumViewer({
               }
 
               // Apartment towers get a second rhythm of thin balcony/slab bands.
-              if (!isResidentialHouse && buildingTypeLower.includes("apartment")) {
+              if (!isResidentialHouse && supportsApartmentUnits) {
                 const balconyColor = facadeFamily.includes("dark") || facadeFamily.includes("charcoal")
                   ? Color.fromCssColorString("#44494a").withAlpha(0.94)
                   : facadeFamily.includes("terracotta")
@@ -5189,6 +5360,13 @@ function CesiumViewer({
               Number(totalHeight || 0)
             );
 
+            const showBuildingLabel =
+              !isResidentialHouse &&
+              (
+                viewModeRef.current === "cadastral" ||
+                isCityLandmarkBuilding(buildingType)
+              );
+
 
             const labelEntity =
               viewer.entities.add({
@@ -5207,18 +5385,18 @@ function CesiumViewer({
 
                 label: {
                   show:
-                    !isResidentialHouse,
+                    showBuildingLabel,
 
                   text:
                     isResidentialHouse
                       ? ""
-                      : buildingTypeLower.includes("apartment")
+                      : supportsApartmentUnits
                         ? `${addressCode} • ${floors}F`
-                        : feature.name,
+                        : buildingName,
 
 
                   font:
-                    buildingTypeLower.includes("apartment")
+                    supportsApartmentUnits
                       ? "bold 12px sans-serif"
                       : "bold 13px sans-serif",
 
@@ -5244,7 +5422,7 @@ function CesiumViewer({
                   distanceDisplayCondition:
                     new DistanceDisplayCondition(
                       0,
-                      buildingTypeLower.includes("apartment") ? 230 : 380
+                      supportsApartmentUnits ? 250 : 340
                     ),
 
                 },
@@ -5283,8 +5461,7 @@ function CesiumViewer({
                   addressNumber:
                     addressNumber,
 
-                  buildingName:
-                    feature.name,
+                  buildingName,
 
                   buildingType:
                     buildingType,
@@ -5325,20 +5502,10 @@ function CesiumViewer({
         // CAMERA FIT
         // =================================================
 
-        viewer.zoomTo(
-          viewer.entities,
-
-          new HeadingPitchRange(
-            CesiumMath.toRadians(
-              30
-            ),
-
-            CesiumMath.toRadians(
-              -30
-            ),
-
-            1800
-          )
+        flyToTownship(
+          viewer,
+          townshipBoundsRef.current,
+          0
         );
       }
 
@@ -5347,7 +5514,7 @@ function CesiumViewer({
       ) {
 
         console.error(
-          "Could not load Bhumi3D scene:",
+          "Could not load CadastraX3D scene:",
           error
         );
       }
@@ -6047,12 +6214,14 @@ function CesiumViewer({
       return;
     }
 
+    const metrics = townshipMetrics(bounds);
+
     if (action === "top") {
       viewer.camera.flyTo({
         destination: Cartesian3.fromDegrees(
           bounds.centerLon,
           bounds.centerLat,
-          1750
+          Math.max(980, metrics.diagonalMeters * 1.50)
         ),
         orientation: {
           heading: 0,
@@ -6065,15 +6234,24 @@ function CesiumViewer({
     }
 
     if (action === "street") {
+      const approachOffset = Math.max(
+        0.00048,
+        Math.abs(bounds.maxLat - bounds.minLat) * 0.22
+      );
+      const streetHeight = Math.min(
+        74,
+        Math.max(48, metrics.diagonalMeters * 0.075)
+      );
+
       viewer.camera.flyTo({
         destination: Cartesian3.fromDegrees(
           bounds.centerLon,
-          bounds.minLat - 0.00034,
-          42
+          bounds.minLat - approachOffset,
+          streetHeight
         ),
         orientation: {
           heading: 0,
-          pitch: CesiumMath.toRadians(-8),
+          pitch: CesiumMath.toRadians(-11),
           roll: 0,
         },
         duration: 1.2,
@@ -6083,14 +6261,7 @@ function CesiumViewer({
 
     if (action === "township" || action === "reset") {
       clearSearchSelection();
-      viewer.zoomTo(
-        viewer.entities,
-        new HeadingPitchRange(
-          CesiumMath.toRadians(28),
-          CesiumMath.toRadians(-34),
-          1800
-        )
-      );
+      flyToTownship(viewer, bounds, 1.15);
     }
   }, [cameraCommand]);
 
@@ -6258,20 +6429,25 @@ function CesiumViewer({
         boundary.polygon.outlineColor = color.withAlpha(cadastral ? 0.92 : 0.30);
       }
       if (label?.label) {
+        label.show = layers.blocks && cadastral;
         label.label.fillColor = Color.WHITE.withAlpha(cadastral ? 0.96 : 0.66);
         label.label.outlineWidth = cadastral ? 4 : 2;
       }
     }
 
     for (const building of buildingsByKeyRef.current.values()) {
-      const apartmentTower = String(building.buildingType || "")
-        .toLowerCase()
-        .includes("apartment");
+      const normalizedBuildingType = String(building.buildingType || "").toLowerCase();
+      const residentialHouse = normalizedBuildingType.includes("residential house");
+      const cityLandmark = isCityLandmarkBuilding(building.buildingType);
       for (const labelEntity of building.labels || []) {
         if (!labelEntity?.label) continue;
-        // Apartment address labels belong mainly to technical/cadastral
-        // inspection; civic landmarks stay labelled in both views.
-        labelEntity.label.show = layers.buildings && (cadastral || !apartmentTower);
+        // City View carries only judge-facing landmark names. Cadastral View
+        // restores technical building addresses at close inspection range.
+        labelEntity.show = layers.buildings;
+        labelEntity.label.show =
+          layers.buildings &&
+          !residentialHouse &&
+          (cadastral || cityLandmark);
       }
     }
   }, [viewMode, layers.blocks, layers.buildings]);
@@ -6332,11 +6508,17 @@ function CesiumViewer({
         return;
       }
 
+      const apartmentBuilding = isApartmentBuilding(building);
+      const targetType =
+        target.target_type === "unit" && !apartmentBuilding
+          ? "floor"
+          : target.target_type;
+
       const data = {
         type:
-          target.target_type === "unit"
+          targetType === "unit"
             ? "Virtual Apartment"
-            : target.target_type === "floor"
+            : targetType === "floor"
               ? "Virtual Floor"
               : "Building Footprint",
         parentUlpIn: target.parent_ulpin,
@@ -6346,8 +6528,8 @@ function CesiumViewer({
         unit: target.display_unit || target.unit || "—",
         verticalRange:
           Number.isFinite(Number(target.z_min)) && Number.isFinite(Number(target.z_max))
-            ? `${target.z_min}m – ${target.z_max}m`
-            : `0m – ${target.height_m || building.totalHeight}m`,
+            ? formatVerticalRange(target.z_min, target.z_max)
+            : formatVerticalRange(0, target.height_m || building.totalHeight),
         validation: target.validation || "Township address index",
         blockCode: target.block_code || building.blockCode,
         addressCode: target.address_code || building.addressCode,
@@ -6355,7 +6537,9 @@ function CesiumViewer({
         buildingName: target.building_name || building.buildingName,
         buildingType: target.building_type || building.buildingType,
         floorCount: Number(target.floors || building.floors || 0),
-        unitsPerFloor: Number(target.units_per_floor || building.unitsPerFloor || 0),
+        unitsPerFloor: apartmentBuilding
+          ? Number(target.units_per_floor || building.unitsPerFloor || 0)
+          : 0,
         floorHeight: Number(target.floor_height || building.floorHeight || 0),
         heightMeters: Number(target.height_m || building.totalHeight || 0),
       };
@@ -6368,9 +6552,9 @@ function CesiumViewer({
       // a unit result exposes the floor and highlights the requested unit.
       showBuildingFloorInspector(building);
 
-      if (target.target_type === "floor") {
+      if (targetType === "floor") {
         showFloorUnitInspector(building, Number(target.floor));
-      } else if (target.target_type === "unit") {
+      } else if (targetType === "unit") {
         showFloorUnitInspector(
           building,
           Number(target.floor),
@@ -6379,7 +6563,7 @@ function CesiumViewer({
       }
 
       const totalHeight = Math.max(6, Number(building.totalHeight || target.height_m || 12));
-      const targetHeight = target.target_type === "unit" || target.target_type === "floor"
+      const targetHeight = targetType === "unit" || targetType === "floor"
         ? Math.max(2, Number(target.z_min || 0) + Number(target.floor_height || building.floorHeight || 3.2) * 0.5)
         : totalHeight * 0.35;
 
@@ -6388,9 +6572,9 @@ function CesiumViewer({
         new HeadingPitchRange(
           CesiumMath.toRadians(35),
           CesiumMath.toRadians(-20),
-          target.target_type === "unit"
+          targetType === "unit"
             ? Math.max(34, totalHeight * 1.15)
-            : target.target_type === "floor"
+            : targetType === "floor"
               ? Math.max(42, totalHeight * 1.45)
               : Math.max(45, totalHeight * 3.2)
         )

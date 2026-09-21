@@ -18,7 +18,7 @@ export async function getPropertyByUnit(unit) {
 
 export async function getScene() {
   const response = await fetch(`${API_BASE_URL}/scene`);
-  if (!response.ok) throw new Error("Could not load Bhumi3D scene");
+  if (!response.ok) throw new Error("Could not load CadastraX3D scene");
   return await response.json();
 }
 
